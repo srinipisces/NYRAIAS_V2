@@ -1,0 +1,160 @@
+const express = require('express');
+const router = express.Router();
+
+const bcrypt = require('bcrypt');
+const jwt = require('jsonwebtoken');
+const pool = require('./db');
+
+const JWT_SECRET = process.env.JWT_SECRET;
+const checkAccess= require('./checkaccess.js');
+
+
+let dbConnected = false;
+
+
+// 🛡️ Auth Middleware
+const { authenticate } = require('./authenticate');
+const { BsTable } = require('react-icons/bs');
+
+router.get("/screeninginwardbagno",authenticate, async(req,res) => {
+    const {accountid} = req.user;
+    const table = `${accountid}_kiln_output`
+    const table2 = `${accountid}_screening_outward`
+  try {
+
+    const que = `select bag_no from ${table} where screening_inward_time is null and exkiln_stock = 'InStock' union all
+                select bag_no from ${table2} where delivery_status = 'Screening' and reload ='InQue'`
+    const result = await pool.query(que);
+    const inwardNumbers = result.rows.map(row => row.bag_no);
+    res.json(inwardNumbers);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+})
+router.get("/ScreeningInwardTable", authenticate,async (req, res) => {
+    const {accountid} = req.user;
+    const table = `${accountid}_kiln_output`
+  try {
+    const result = await pool.query(`SELECT * 
+    FROM ${table} 
+    WHERE screening_inward_time IS NOT NULL 
+    and exkiln_stock = 'InStock'
+    ORDER BY screening_inward_time DESC 
+    LIMIT 10;
+    `);
+    const rows = result.rows;
+    const columns = result.fields.map((field) => ({
+      field: field.name,
+      headerName: field.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+      flex: 1,
+    }));
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+})
+
+router.post("/ScreeningInward", authenticate,checkAccess('Operations.Screening Inward'),async(req,res) => {
+    const {userid,accountid} = req.user;
+    const bag_no  = req.body.bag_no;
+    
+    const prefix = bag_no.trim().charAt(0).toUpperCase();
+    let table, que,values;
+  try {
+    if (prefix === 'S') {
+      table = `${accountid}_screening_outward`;
+      que = `
+        UPDATE ${table} set
+        reload ='loaded',
+        reload_time =current_timestamp,
+        reload_userid = '${userid}'
+        where bag_no = '${bag_no}'
+      `;
+      console.log(que);
+      const result = await pool.query(que);
+    } else if (prefix === 'K') {
+      table = `${accountid}_kiln_output`;
+      que = `update ${table} 
+      set screening_inward_time = $1,
+      screening_inward_kiln = $2,
+      grade = $4,
+      ctc = $5,
+      machine =$6,
+      userid_screening_inward = $8,
+      output_required = $7,
+      exkiln_stock = 'Screening'  
+      where bag_no = $3`
+
+      values = [req.body.date_time,
+        req.body.kiln,
+        req.body.bag_no,
+        req.body.grade,
+        req.body.ctc,
+        req.body.machine,
+        req.body.output_required,
+        userid ];
+      const result = await pool.query(que,values);
+
+    } else {
+      return res.status(400).json({ message: 'Bag number must start with S or K' });
+    }
+  
+    
+    
+    res.json({ operation: 'success' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+})
+
+router.post("/ScreeningOutward",authenticate,checkAccess('Operations.Screening Outward'), async(req,res) => {
+    const {userid,accountid} = req.user;
+    const table = `${accountid}_screening_outward`
+    try {
+
+    const que = `insert into ${table} 
+    (screening_out_dt,weight,grade,machine,userid)
+    values ($1,$2,$3,$4,$5)
+    `
+
+    const values = [req.body.date_time,
+      req.body.bag_weight,
+      req.body.grade,
+      req.body.machine,
+      userid];
+    console.log(values,que)
+    const result = await pool.query(que,values);
+    
+    res.json({ operation: 'success' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+})
+
+// final
+router.get("/ScreeningOutward",authenticate, async(req,res) => {
+    const {accountid} = req.user;
+    const table = `${accountid}_screening_outward`
+    try {
+      const result = await pool.query(`SELECT * 
+      FROM ${table} 
+      ORDER BY write_dt DESC 
+      LIMIT 50;
+      `);
+      const rows = result.rows;
+      const columns = result.fields.map((field) => ({
+        field: field.name,
+        headerName: field.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        flex: 1,
+      }));
+      res.json({ columns, rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+module.exports = router;
