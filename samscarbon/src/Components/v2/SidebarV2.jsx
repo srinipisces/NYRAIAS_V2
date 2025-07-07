@@ -39,7 +39,7 @@ export default function Sidebar({ onNavigate }) {
     } catch (err) {
       console.warn('Logout failed (maybe token expired):', err.message);
     }
-    window.location.href = 'http://10.0.0.211/'; // Redirect to login
+    window.location.href = import.meta.env.VITE_REDIRECT; // Redirect to login
   };
 
   return (

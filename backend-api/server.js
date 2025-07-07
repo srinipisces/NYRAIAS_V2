@@ -15,8 +15,8 @@ app.use(helmet());
 
 const allowedOrigin = 'http://10.0.0.211'; // your frontend origin
 app.use(cors({
-  origin: allowedOrigin,
-  credentials: true,
+  origin: '*',
+  credentials: false,
 }));
 
 app.use(cookieParser());

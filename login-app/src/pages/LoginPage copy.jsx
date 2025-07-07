@@ -20,16 +20,11 @@ const LoginPage = () => {
   useEffect(() => {
     axios
       .get(`${API_URL}/api/users/validate-token`, {
-        withCredentials: true,
+        withCredentials: true, // ensure cookie is sent
       })
       .then((res) => {
         const { accountid } = res.data;
-        const currentPath = window.location.pathname;
-
-        // ✅ Prevent unnecessary redirect loop
-        if (!currentPath.startsWith(`/${accountid}`)) {
-          window.location.href = `${window.location.origin}/${accountid}/`;
-        }
+        window.location.href = `/${accountid}`;
       })
       .catch(() => {
         // No valid token or error; stay on login page
@@ -49,12 +44,11 @@ const LoginPage = () => {
         `${API_URL}/api/users/login`,
         { userid, accountid, password },
         {
-          withCredentials: true,
+          withCredentials: true, // send and accept cookies
         }
       );
 
-      // ✅ Redirect to tenant app
-      window.location.href = `${window.location.origin}/${accountid}/`;
+      window.location.href = `/${accountid}`;
     } catch (err) {
       setError(err.response?.data?.message || 'Login failed');
     }

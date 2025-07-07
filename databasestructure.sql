@@ -22,37 +22,37 @@ CREATE SEQUENCE IF NOT EXISTS samcarbon_inward_number_seq
 
 
 CREATE TABLE samcarbon_rawmaterial_rcvd (
-    write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when the record was written, system generated, it will be the date and time the security entered the data(material arrival) in the system
 
-    material_arrivaltime TIMESTAMP,
-    supplier_name TEXT NOT NULL,
-    supplier_weight NUMERIC(10,2) NOT NULL,
-    supplier_value NUMERIC(10,2),
-    supplier_dc_number TEXT NOT NULL,
+    material_arrivaltime TIMESTAMP, -- record entered by security stating the time and date of arrival of the rawmaterial
+    supplier_name TEXT NOT NULL,  -- name of the supplier
+    supplier_weight NUMERIC(10,2) NOT NULL, -- weigth declared by supplier
+    supplier_value NUMERIC(10,2), -- value declared by supplier
+    supplier_dc_number TEXT NOT NULL, -- DC number of the supplier
 
-    inward_number TEXT PRIMARY KEY DEFAULT ('I-' || nextval('samcarbon_inward_number_seq')::text),
+    inward_number TEXT PRIMARY KEY DEFAULT ('I-' || nextval('samcarbon_inward_number_seq')::text), -- inward number is system generated, it is unique number given this batch of rawmaterial
 
-    our_weight NUMERIC(10,2) NOT NULL,
-    userid TEXT,
+    our_weight NUMERIC(10,2) NOT NULL, -- weeight as per the security
+    userid TEXT, -- userid of security 
 
-    lab_result TIMESTAMP,
-    lab_userid TEXT,
+    lab_result TIMESTAMP, -- lab result the time it was declared 
+    lab_userid TEXT, -- lab user
     moisture NUMERIC(10,2),
     dust NUMERIC(10,2),
     ad_value NUMERIC(10,2),
 
-    material_inward_status TEXT,
-    material_inward_remarks TEXT,
-    material_inward_status_upddt TIMESTAMP,
-    material_inward_userid TEXT,
+    material_inward_status TEXT, -- this shows whether this batch is loaded in the crusher aor not. It has status as complete or null if it is not complete
+    material_inward_remarks TEXT, -- remarks
+    material_inward_status_upddt TIMESTAMP, -- complete status time stamp
+    material_inward_userid TEXT, -- user who recorded this data
 
-    material_outward_status TEXT,
+    material_outward_status TEXT, -- this shows wheter the rawmaterial has passed through the crusher, it will say complete if completed or null if not complete. after this point it will granulated charcoal
     material_outward_remarks TEXT,
-    material_outward_status_upddt TIMESTAMP,
-    material_outward_userid TEXT,
+    material_outward_status_upddt TIMESTAMP, -- timestamp when it was complete
+    material_outward_userid TEXT, 
 
-    kiln_feed_status TEXT,
-    kiln_feed_status_upddt TIMESTAMP,
+    kiln_feed_status TEXT, -- this inward has been completely loaded in the kiln, it will show complete once complted if not null
+    kiln_feed_status_upddt TIMESTAMP, -- date and time when the kiln feed is completed.
     kiln_feed_userid TEXT,
 
     deleted BOOLEAN DEFAULT FALSE,

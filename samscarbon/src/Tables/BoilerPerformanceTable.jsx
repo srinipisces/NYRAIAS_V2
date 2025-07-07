@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import DynamicTable from './DynamicTable';
 import axios from 'axios';
-import { TbRulerMeasure } from 'react-icons/tb';
+
 
 export default function BoilerPerformanceTable() {
   const [tableData, setTableData] = useState({ columns: [], rows: [] });
