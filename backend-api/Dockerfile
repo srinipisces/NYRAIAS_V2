@@ -1,10 +1,20 @@
+# Use an official Node.js runtime as the base image
 FROM node:18-alpine
 
+# Set working directory inside container
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm install
+# Copy only package files first (for better caching)
+COPY package*.json ./
 
+# Install only production dependencies
+RUN npm install --only=production
+
+# Copy the rest of the backend code
 COPY . .
 
-CMD ["node", "index.js"]
+# Expose the backend port
+EXPOSE 8000
+
+# Start the Express server
+CMD ["node", "server.js"]

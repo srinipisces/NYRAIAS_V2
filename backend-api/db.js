@@ -8,4 +8,12 @@ const pool = new Pool({
   ssl: { rejectUnauthorized: false },
 });
 
+pool.on('connect', async (client) => {
+  try {
+    await client.query(`SET TIME ZONE 'Asia/Kolkata'`);
+  } catch (err) {
+    console.error('Failed to set session timezone:', err.message);
+  }
+});
+
 module.exports = pool;

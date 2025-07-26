@@ -33,7 +33,7 @@ router.get("/inwardlabque", authenticate, async (req, res) => {
 router.post(
   "/inwardlabtest",
   authenticate,
-  checkAccess('Operations.@Lab'),
+  checkAccess('Operations.Lab'),
   async (req, res) => {
     const { userid, accountid } = req.user; // ✅ extract from token
     const table = `${accountid}_rawmaterial_rcvd`; // ✅ tenant-specific table
@@ -46,7 +46,9 @@ router.post(
           dust = $2,
           ad_value = $3,
           lab_result = CURRENT_TIMESTAMP,
-          lab_userid = $5
+          lab_userid = $5,
+          admit_load = $6,
+          remarks = $7
         WHERE inward_number = $4
       `;
 
@@ -55,6 +57,8 @@ router.post(
         req.body.dust,
         req.body.ad_value,
         req.body.inward_number,
+        req.body.admit_load,
+        req.body.remarks,
         userid // ✅ from token, not request body
       ];
 

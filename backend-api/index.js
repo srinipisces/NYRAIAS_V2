@@ -66,7 +66,7 @@ router.get("/gcharcoalstock", async(req,res) => {
 })
 
 //// security
-router.post("/materialatgate", authenticate, checkAccess("Operations.@Security"), async (req, res) => {
+router.post("/materialatgate", authenticate, checkAccess("Operations.Security"), async (req, res) => {
   try {
     const { userid, accountid } = req.user;
     const {
@@ -176,10 +176,10 @@ router.get("/RawMaterialIncoming", authenticate, async (req, res) => {
 router.get("/inwnumforcrusheroutward",authenticate, async(req,res) => {
   const {accountid} = req.user
   const rawTable = `${accountid}_rawmaterial_rcvd`;
-  const bagTable = `${accountid}_crusher_performance`;
+  const bagTable = `${accountid}_material_inward_bag`;
   try {
 
-    const que = `select inward_number from ${rawTable} where material_inward_status is not null and material_outward_status is null and inward_number not in (select inward_number from ${bagTable})`
+    const que = `select inward_number from ${rawTable} where material_outward_status is null and inward_number in (select inward_number from ${bagTable})`
     const result = await pool.query(que);
     const inwardNumbers = result.rows.map(row => row.inward_number);
     res.json(inwardNumbers);
@@ -320,65 +320,11 @@ router.post(
 
 
 //----final
-router.get("/inwardnumber_kilnfeedquality_select", async(req,res) => {
-  try {
 
-    const que = "select distinct(inward_number) from material_outward_bag where kiln_quality_updt is null and kiln_feed_status is not null"
-    const result = await pool.query(que);
-    const inwardNumbers = result.rows.map(row => row.inward_number);
-    res.json(inwardNumbers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
-  }
-})
 // final
-router.get("/inwardnumber_kilnfeedquality_bag_no_select", async(req,res) => {
-  try {
 
-    const que = "select bag_no from material_outward_bag where kiln_feed_status is not null and inward_number = $1 and grade not in('Stones','Unburnt')"
-    const values = [req.query.inward_number];
-    console.log(values,que)
-    const result = await pool.query(que,values);
-    const inwardNumbers = result.rows.map(row => row.bag_no);
-    res.json(inwardNumbers);
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
-  }
-})
 // final
-router.post("/kilnfeedquality", async(req,res) => {
-  try {
 
-    const que = `update material_outward_bag 
-    set kiln_quality_updt = current_timestamp,
-    grade_plus2 = $1,
-    grade_2by3 = $2,
-    grade_3by6 = $3,
-    grade_6by8 =$4,
-    grade_8by10 = $5,
-    grade_10by12 = $6,
-    grade_12by14 = $7,
-    grade_minus14 = $8,
-    feed_moisture = $8,
-    dust = $9,
-    feed_volatile = $10,
-    remarks = $11,
-    kiln_feed_quality_entry = $12
-    where bag_no = $13  `
-    const values = [req.body.g_plus_2,req.body.g_2by3,req.body.g_3by6,req.body.g_6by8,req.body.g_8by10,
-      req.body.g_10by12,req.body.g_12by14,req.body.g_minus_14,req.body.feed_moisture,
-      req.body.dust,req.body.remarks,req.body.kiln_quality_entryDateTime,req.body.bag_no];
-    console.log(values,que)
-    const result = await pool.query(que,values);
-    
-    res.json({ operation: 'success' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: "Database error" });
-  }
-})
 //final..
 router.get("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Performance'),async (req, res) => {
   const {accountid} = req.user;
@@ -415,7 +361,7 @@ router.post("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Pe
       feed_pump,
       blower_open,
       fan_damper_open,
-      vfd_rpm,
+      id_fan_rpm,
       remarks,
       userid
     ) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) `
@@ -423,7 +369,7 @@ router.post("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Pe
       req.body.boiler_pressure,req.body.boiler_inlet_temperature,
       req.body.boiler_outlet_temperature,req.body.feed_pump,
       req.body.blower_open,req.body.fan_damper_open,
-      req.body.vfd_rpm,req.body.remarks,userid];
+      req.body.id_fan_rpm,req.body.remarks,userid];
     console.log(values,que)
     const result = await pool.query(que,values);
     

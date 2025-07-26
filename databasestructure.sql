@@ -1,4 +1,4 @@
-CREATE TABLE samcarbon_authentication (
+CREATE TABLE testbed_authentication (
   userid TEXT PRIMARY KEY,
   password TEXT NOT NULL,
   name TEXT,
@@ -10,18 +10,18 @@ CREATE TABLE samcarbon_authentication (
   activities JSONB DEFAULT '[]'::jsonb
 );
 
-drop table samcarbon_rawmaterial_rcvd;
-drop SEQUENCE samcarbon_inward_number_seq;
+drop table testbed_rawmaterial_rcvd;
+drop SEQUENCE testbed_inward_number_seq;
 
-CREATE SEQUENCE IF NOT EXISTS samcarbon_inward_number_seq
-    START WITH 1000
+CREATE SEQUENCE IF NOT EXISTS testbed_inward_number_seq
+    START WITH 1000  
     INCREMENT BY 1
     MINVALUE 1000
     NO MAXVALUE
     CACHE 1;
 
 
-CREATE TABLE samcarbon_rawmaterial_rcvd (
+CREATE TABLE testbed_rawmaterial_rcvd (
     write_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP, -- when the record was written, system generated, it will be the date and time the security entered the data(material arrival) in the system
 
     material_arrivaltime TIMESTAMP, -- record entered by security stating the time and date of arrival of the rawmaterial
@@ -30,7 +30,7 @@ CREATE TABLE samcarbon_rawmaterial_rcvd (
     supplier_value NUMERIC(10,2), -- value declared by supplier
     supplier_dc_number TEXT NOT NULL, -- DC number of the supplier
 
-    inward_number TEXT PRIMARY KEY DEFAULT ('I-' || nextval('samcarbon_inward_number_seq')::text), -- inward number is system generated, it is unique number given this batch of rawmaterial
+    inward_number TEXT PRIMARY KEY DEFAULT ('I-' || nextval('testbed_inward_number_seq')::text), -- inward number is system generated, it is unique number given this batch of rawmaterial
 
     our_weight NUMERIC(10,2) NOT NULL, -- weeight as per the security
     userid TEXT, -- userid of security 
@@ -40,6 +40,8 @@ CREATE TABLE samcarbon_rawmaterial_rcvd (
     moisture NUMERIC(10,2),
     dust NUMERIC(10,2),
     ad_value NUMERIC(10,2),
+    admit_load text,
+    remarks text,
 
     material_inward_status TEXT, -- this shows whether this batch is loaded in the crusher aor not. It has status as complete or null if it is not complete
     material_inward_remarks TEXT, -- remarks
@@ -59,7 +61,7 @@ CREATE TABLE samcarbon_rawmaterial_rcvd (
     activities JSONB DEFAULT '[]'
 );
 
-CREATE TABLE samcarbon_suppliers (
+CREATE TABLE testbed_suppliers (
   supplier_name TEXT PRIMARY KEY,
   street TEXT,
   city TEXT,
@@ -71,7 +73,7 @@ CREATE TABLE samcarbon_suppliers (
   activities JSONB DEFAULT '[]'
 );
 
-create table samcarbon_material_inward_bag (
+create table testbed_material_inward_bag (
     write_timestamp TIMESTAMP default CURRENT_TIMESTAMP,
     inward_number text not null,
     bag_no text PRIMARY key,
@@ -80,7 +82,7 @@ create table samcarbon_material_inward_bag (
 );
 
 -- 1. Create the trigger function with tenant+table-specific name
-CREATE OR REPLACE FUNCTION trg_set_bag_no_per_samcarbon_material_inward_bag()
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_material_inward_bag()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -98,7 +100,7 @@ BEGIN
     CAST(REGEXP_REPLACE(bag_no, '^' || NEW.inward_number || '-Inw-', '') AS INTEGER)
   )
   INTO last_counter
-  FROM samcarbon_material_inward_bag
+  FROM testbed_material_inward_bag
   WHERE inward_number = NEW.inward_number
     AND bag_no ~ ('^' || NEW.inward_number || '-Inw-[0-9]+$');
 
@@ -115,16 +117,16 @@ END;
 $$;
 
 -- 2. Attach the trigger to the table with a unique trigger name
-DROP TRIGGER IF EXISTS set_bag_no_before_insert_per_samcarbon_material_inward_bag
-ON samcarbon_material_inward_bag;
+DROP TRIGGER IF EXISTS set_bag_no_before_insert_per_testbed_material_inward_bag
+ON testbed_material_inward_bag;
 
-CREATE TRIGGER set_bag_no_before_insert_per_samcarbon_material_inward_bag
-BEFORE INSERT ON samcarbon_material_inward_bag
+CREATE TRIGGER set_bag_no_before_insert_per_testbed_material_inward_bag
+BEFORE INSERT ON testbed_material_inward_bag
 FOR EACH ROW
-EXECUTE FUNCTION trg_set_bag_no_per_samcarbon_material_inward_bag();
+EXECUTE FUNCTION trg_set_bag_no_per_testbed_material_inward_bag();
 
 
-CREATE TABLE samcarbon_crusher_performance (
+CREATE TABLE testbed_crusher_performance (
   event_timestamp TIMESTAMP WITHOUT TIME ZONE default CURRENT_TIMESTAMP,
   inward_number TEXT,
   grade_plus2 NUMERIC(10,2),
@@ -144,7 +146,7 @@ CREATE TABLE samcarbon_crusher_performance (
 
 
 
-create table samcarbon_material_outward_bag (
+create table testbed_material_outward_bag (
     write_timestamp TIMESTAMP default CURRENT_TIMESTAMP,
     inward_number text not null,
     bag_no text PRIMARY key,
@@ -155,6 +157,7 @@ create table samcarbon_material_outward_bag (
     kiln text,
     kiln_load_time TIMESTAMP,
     kiln_quality_updt timestamp,
+    kiln_loaded_weight numeric(10,2),
     grade_plus2 numeric(10,2),
     grade_2by3 numeric(10,2),
     grade_3by6 numeric(10,2),
@@ -166,10 +169,12 @@ create table samcarbon_material_outward_bag (
     feed_moisture numeric(10,2),
     dust numeric(10,2),
     feed_volatile numeric(10,2),
-    remarks text     
+    remarks text,
+    kiln_quality_updt_user text ,
+    kiln_feed_quality_sysentry timestamp   
 );
 
-CREATE OR REPLACE FUNCTION trg_set_bag_no_per_samcarbon_material_outward_bag()
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_material_outward_bag()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -187,7 +192,7 @@ BEGIN
     CAST(REGEXP_REPLACE(bag_no, '^' || NEW.inward_number || '-Out-', '') AS INTEGER)
   )
   INTO last_counter
-  FROM samcarbon_material_outward_bag
+  FROM testbed_material_outward_bag
   WHERE inward_number = NEW.inward_number
     AND bag_no ~ ('^' || NEW.inward_number || '-Out-[0-9]+$');
 
@@ -204,15 +209,15 @@ END;
 $$;
 
 -- 2. Attach the trigger to the table:
-DROP TRIGGER IF EXISTS set_bag_no_before_insert_per_samcarbon_material_outward_bag ON samcarbon_material_outward_bag;
+DROP TRIGGER IF EXISTS set_bag_no_before_insert_per_testbed_material_outward_bag ON testbed_material_outward_bag;
 
-CREATE TRIGGER set_bag_no_before_insert_per_samcarbon_material_outward_bag
-BEFORE INSERT ON samcarbon_material_outward_bag
+CREATE TRIGGER set_bag_no_before_insert_per_testbed_material_outward_bag
+BEFORE INSERT ON testbed_material_outward_bag
 FOR EACH ROW
-EXECUTE FUNCTION trg_set_bag_no_per_samcarbon_material_outward_bag();
+EXECUTE FUNCTION trg_set_bag_no_per_testbed_material_outward_bag();
 
-drop table samcarbon_boiler_performance;
-create table samcarbon_boiler_performance (
+drop table testbed_boiler_performance;
+create table testbed_boiler_performance (
 boiler_perf_entryDateTime timestamp,
 boiler_number text,
 boiler_pressure numeric(12,2),
@@ -221,13 +226,13 @@ boiler_outlet_temperature numeric(12,2),
 feed_pump text,
 blower_open numeric,
 fan_damper_open numeric,
-vfd_rpm numeric,
+id_fan_rpm numeric,
 remarks text,
 userid text,
 datainserted timestamp default CURRENT_TIMESTAMP );
 
-
-create table samcarbon_kiln_output (
+drop table testbed_kiln_output;
+create table testbed_kiln_output (
 write_timestamp        timestamp default CURRENT_TIMESTAMP,
 kiln_output_dt         timestamp, 
 from_the_kiln          text,
@@ -235,18 +240,102 @@ bag_no text primary key,
 weight_with_stones     integer,
 remarks                text,
 userid_kilnoutput text,
+quality_updt_time timestamp,
+quality_plus_3 numeric,
+quality_3by4 numeric,
+quality_4by8 numeric,
+quality_8by12 numeric,
+quality_12by30 numeric,
+quality_minus_30 numeric,
+quality_cbd numeric,
+quality_ctc numeric,
+quality_remarks text,
+quality_updt_user text,
 screening_inward_time timestamp,
 screening_inward_kiln text,
-grade text,
-ctc text,
-output_required text,
-machine text,
+screening_bag_weight numeric(12,2),
+screening_output_required text,
+screening_machine text,
 userid_screening_inward text,
-exkiln_stock text default 'InStock',
+exkiln_stock text default 'De-Stoning',
+destoning_in_user text,
+destoning_in_updt timestamp,
+destoning_in_weight numeric(12,2),
+destoning_out_user text,
+destoning_out_updt timestamp,
+destoning_out_weight numeric(12,2),
+destoning_ctc numeric,
 stock_upd_user text,
 stock_upd_dt timestamp);
 
-CREATE OR REPLACE FUNCTION trg_set_bag_no_per_samcarbon_kiln_output()
+
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_kiln_output()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  date_str TEXT;
+  kiln_suffix TEXT;
+  prefix TEXT;
+  last_counter INTEGER;
+BEGIN
+  IF NEW.bag_no IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- Validate format begins with "Kiln "
+  IF NEW.from_the_kiln IS NULL OR POSITION('Kiln ' IN NEW.from_the_kiln) <> 1 THEN
+    RAISE EXCEPTION 'Invalid from_the_kiln: must begin with "Kiln "';
+  END IF;
+
+  -- Extract everything after "Kiln "
+  kiln_suffix := TRIM(SUBSTRING(NEW.from_the_kiln FROM 6));
+
+  IF kiln_suffix = '' THEN
+    RAISE EXCEPTION 'Invalid from_the_kiln: no text found after "Kiln "';
+  END IF;
+
+  -- Format date as DDMMYY
+  date_str := TO_CHAR(NEW.kiln_output_dt, 'DDMMYY');
+
+  -- Prefix: KO<kiln_suffix>_<DDMMYY>_
+  prefix := 'KO' || kiln_suffix || '_' || date_str || '_';
+
+  -- Lock based on prefix for concurrency safety
+  PERFORM pg_advisory_xact_lock(hashtext(prefix));
+
+  -- Get max existing bag number for the prefix
+  SELECT MAX(CAST(SUBSTRING(bag_no FROM LENGTH(prefix) + 1) AS INTEGER))
+  INTO last_counter
+  FROM testbed_kiln_output
+  WHERE bag_no LIKE prefix || '%'
+    AND bag_no ~ ('^' || prefix || '[0-9]{4}$');
+
+  IF last_counter IS NULL THEN
+    last_counter := 1000; -- so the first will be 1001
+  END IF;
+
+  last_counter := last_counter + 1;
+
+  IF last_counter > 9999 THEN
+    RAISE EXCEPTION 'Exceeded bag_no limit for % on %', kiln_suffix, date_str;
+  END IF;
+
+  NEW.bag_no := prefix || LPAD(last_counter::TEXT, 4, '0');
+
+  RETURN NEW;
+END;
+$$;
+
+drop TRIGGER trg_before_insert_testbed_kiln_output on testbed_kiln_output;
+CREATE or replace TRIGGER trg_before_insert_testbed_kiln_output
+BEFORE INSERT ON testbed_kiln_output
+FOR EACH ROW
+EXECUTE FUNCTION trg_set_bag_no_per_testbed_kiln_output();
+
+
+ /*  old function --- new one above has the new naming format..
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_nyra_kiln_output()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -269,7 +358,7 @@ BEGIN
     CAST(REGEXP_REPLACE(bag_no, '^kiln_output_' || date_str || '-', '') AS INTEGER)
   )
   INTO last_counter
-  FROM samcarbon_kiln_output
+  FROM nyra_kiln_output
   WHERE bag_no ~ ('^kiln_output_' || date_str || '-[0-9]+$');
 
   IF last_counter IS NULL THEN
@@ -282,14 +371,11 @@ BEGIN
 
   RETURN NEW;
 END;
-$$;
+$$; */
 
-CREATE TRIGGER trg_before_insert_samcarbon_kiln_output
-BEFORE INSERT ON samcarbon_kiln_output
-FOR EACH ROW
-EXECUTE FUNCTION trg_set_bag_no_per_samcarbon_kiln_output();
 
-create table samcarbon_screening_outward (
+
+create table testbed_screening_outward (
   
   screening_out_dt timestamp,
   bag_no text primary key,
@@ -304,10 +390,16 @@ create table samcarbon_screening_outward (
   stock_change_dt timestamp,
   reload text default 'InQue',
   reload_time timestamp,
+  reload_kiln text,
+  reload_bag_weight numeric(12,2),
+  reload_grade text,
+  reload_ctc text,
+  reload_machine text,
+  reload_output_required text,
   reload_userid text
 );
 
-CREATE OR REPLACE FUNCTION trg_set_bag_no_per_samcarbon_screening_outward()
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_screening_outward()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -330,7 +422,7 @@ BEGIN
     CAST(REGEXP_REPLACE(bag_no, '^Screen_' || date_str || '-', '') AS INTEGER)
   )
   INTO last_counter
-  FROM samcarbon_screening_outward
+  FROM testbed_screening_outward
   WHERE bag_no ~ ('^Screen_' || date_str || '-[0-9]+$');
 
   IF last_counter IS NULL THEN
@@ -346,7 +438,78 @@ BEGIN
 END;
 $$;
 
-CREATE TRIGGER trg_generate_bag_no_samcarbon_screening_outward
-BEFORE INSERT ON samcarbon_screening_outward
+CREATE TRIGGER trg_generate_bag_no_testbed_screening_outward
+BEFORE INSERT ON testbed_screening_outward
 FOR EACH ROW
-EXECUTE FUNCTION trg_set_bag_no_per_samcarbon_screening_outward();
+EXECUTE FUNCTION trg_set_bag_no_per_testbed_screening_outward();
+
+
+create table testbed_kiln_temp (
+  temp_dt timestamp,
+  kiln text,
+  t1 numeric(12,2),
+  t2 numeric(12,2),
+  t3 numeric(12,2),
+  t4 numeric(12,2),
+  chamber numeric(12,2),
+  feed_rate numeric(12,2),
+  kiln_rpm numeric(12,2),
+  main_damper_open_per numeric(12,2),
+  boiler_damper_open_per numeric(12,2),
+  steam_pressure numeric(12,2),
+  remarks text,
+  userid text,
+  entry_dt timestamp 
+);
+
+create table account_route_config (
+  accountid text primary key,
+  route text
+);
+
+create table testbed_dropdown (
+  tabname text primary key,
+  settings jsonb
+);
+
+
+create table testbed_rms_performance
+          (inward_number text primary key,
+          supplier_name text,
+          inward_dt timestamp,
+          material_inward_status text,
+          material_inward_completed_dt timestamp,
+          material_outward_status text,
+          material_outward_completed_dt timestamp,
+          kiln_feed_status text,
+          kiln_feed_completed_dt timestamp,
+          supplier_weight numeric,
+          our_weight numeric,
+          RMS_inward_weight numeric,
+          RMS_inward_loss numeric,
+          Grade_Weight_after_crusher numeric,
+          Physical_Loss_in_crusher numeric,
+          RMS_outward_weight numeric,
+          kiln_loaded_weight numeric);
+
+
+create table samcarbons_rawmaterial_inward_history (
+            Date timestamp,
+            inward_number text,
+            supplier_name text,
+            supplier_weight numeric,
+            weight_at_security numeric,
+            raw_material_inward_no_bags numeric,
+            raw_material_inward_weight numeric,
+            raw_material_inward_stock numeric,
+            raw_material_inward_loss_or_gain numeric,
+            raw_material_inward_status text,
+            raw_material_outward_status text,
+            raw_material_outward_no_bags numeric,
+            Gcharcoal_Weight_after_crusher numeric,
+            Physical_Loss_in_crusher numeric,
+            Total_weight_from_crusher numeric,
+            kiln_loaded_weight numeric,
+            kiln_load_no_bags numeric,
+            kiln_feed_status timestamp
+        );

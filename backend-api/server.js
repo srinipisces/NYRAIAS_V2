@@ -13,10 +13,10 @@ app.use(cookieParser());
 // ✅ Middleware
 app.use(helmet());
 
-const allowedOrigin = 'http://10.0.0.211'; // your frontend origin
+const allowedOrigin = process.env.CORS; // your frontend origin
 app.use(cors({
-  origin: '*',
-  credentials: false,
+  origin: allowedOrigin,
+  credentials: true,
 }));
 
 app.use(cookieParser());
@@ -40,6 +40,7 @@ pool.connect()
     app.use('/api/stock', require('./stock'));
     app.use('/api/dashboard', require('./dashboard'));
     app.use('/api/reports', require('./reports'));
+    app.use('/api/settings', require('./settings'));
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {

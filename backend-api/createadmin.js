@@ -17,7 +17,11 @@ const createAdminUser = async (accountid, password = 'administrator') => {
     const saltRounds = 10;
     const hashedPassword = await bcrypt.hash(password, saltRounds);
 
-    const access = ['dashboard', 'settings', 'usermanagement'];
+    const access = ['Dashboard','Reports','Settings',
+    'Operations.Security', 'Operations.Lab', 'Operations.Raw-Material Inward', 'Operations.Crusher Performance', 'Operations.Raw-Material Outward',
+    'Operations.Kiln Feed','Operations.Kiln Feed Quality', 'Operations.Boiler Performance', 'Operations.Kiln Output', 'Operations.Screening Inward', 
+    'Operations.Screening Outward', 'Operations.Stock'
+  ];
     const activities = [{
       timestamp: new Date().toISOString(),
       action: 'User Created',
@@ -31,7 +35,7 @@ const createAdminUser = async (accountid, password = 'administrator') => {
     }];
 
     const insertQuery = `
-      INSERT INTO samcarbon_authentication (
+      INSERT INTO ${accountid}_authentication (
         userid, password, name, email, phone, access, status, accountid, activities
       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       ON CONFLICT (userid) DO NOTHING;

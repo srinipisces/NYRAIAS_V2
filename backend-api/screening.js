@@ -20,11 +20,19 @@ router.get("/screeninginwardbagno",authenticate, async(req,res) => {
     const {accountid} = req.user;
     const table = `${accountid}_kiln_output`
     const table2 = `${accountid}_screening_outward`
+    let que =''
+    let values = []
   try {
-
-    const que = `select bag_no from ${table} where screening_inward_time is null and exkiln_stock = 'InStock' union all
-                select bag_no from ${table2} where delivery_status = 'Screening' and reload ='InQue'`
-    const result = await pool.query(que);
+    const kiln = req.query.kiln;
+    
+    if (kiln==='Re-Screening'){
+      que = `select bag_no from ${table2} where delivery_status = 'Screening' and reload ='InQue'`
+    }
+    else {
+      que = `select bag_no from ${table} where screening_inward_time is null and exkiln_stock = 'Screening' and from_the_kiln=$1`,
+      values = [kiln]
+    }       
+    const result = await pool.query(que,values);
     const inwardNumbers = result.rows.map(row => row.bag_no);
     res.json(inwardNumbers);
   } catch (err) {
@@ -68,33 +76,45 @@ router.post("/ScreeningInward", authenticate,checkAccess('Operations.Screening I
       que = `
         UPDATE ${table} set
         reload ='loaded',
-        reload_time =current_timestamp,
-        reload_userid = '${userid}'
-        where bag_no = '${bag_no}'
+        reload_time =$1,
+        reload_kiln = $2,
+        reload_machine =$5,
+        reload_output_required = $6,
+        reload_userid = $7,
+        reload_bag_weight = $8,
+        exkiln_stock = 'ScreeningCompleted'
+        where bag_no = $9
       `;
-      console.log(que);
-      const result = await pool.query(que);
+      values = [req.body.date_time,
+        req.body.kiln,
+        req.body.machine,
+        req.body.output_required,
+        userid,
+        req.body.bag_weight,
+        req.body.bag_no
+       ];
+      
+      const result = await pool.query(que,values);
     } else if (prefix === 'K') {
       table = `${accountid}_kiln_output`;
       que = `update ${table} 
       set screening_inward_time = $1,
       screening_inward_kiln = $2,
-      grade = $4,
-      ctc = $5,
-      machine =$6,
+      screening_machine =$6,
       userid_screening_inward = $8,
-      output_required = $7,
-      exkiln_stock = 'Screening'  
+      screening_output_required = $7,
+      exkiln_stock = 'Screening',
+      screening_bag_weight = $9  
       where bag_no = $3`
 
       values = [req.body.date_time,
         req.body.kiln,
         req.body.bag_no,
-        req.body.grade,
-        req.body.ctc,
         req.body.machine,
         req.body.output_required,
-        userid ];
+        userid,
+        req.body.bag_weight
+       ];
       const result = await pool.query(que,values);
 
     } else {
@@ -116,15 +136,16 @@ router.post("/ScreeningOutward",authenticate,checkAccess('Operations.Screening O
     try {
 
     const que = `insert into ${table} 
-    (screening_out_dt,weight,grade,machine,userid)
-    values ($1,$2,$3,$4,$5)
+    (screening_out_dt,weight,grade,machine,userid,ctc)
+    values ($1,$2,$3,$4,$5,$6)
     `
 
     const values = [req.body.date_time,
       req.body.bag_weight,
       req.body.grade,
       req.body.machine,
-      userid];
+      userid,
+      req.body.ctc];
     console.log(values,que)
     const result = await pool.query(que,values);
     
@@ -140,10 +161,11 @@ router.get("/ScreeningOutward",authenticate, async(req,res) => {
     const {accountid} = req.user;
     const table = `${accountid}_screening_outward`
     try {
-      const result = await pool.query(`SELECT * 
+      const result = await pool.query(`SELECT screening_out_dt,bag_no,weight,grade,ctc,machine,
+      write_dt,userid,delivery_status,stock_change_userid,stock_change_dt
       FROM ${table} 
-      ORDER BY write_dt DESC 
-      LIMIT 50;
+      where delivery_status = 'InStock'
+      ORDER BY write_dt DESC ;
       `);
       const rows = result.rows;
       const columns = result.fields.map((field) => ({
@@ -157,4 +179,27 @@ router.get("/ScreeningOutward",authenticate, async(req,res) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+
+router.post('/update-cell', authenticate, checkAccess('Operations.Screening Outward'),async (req, res) => {
+  const { primaryKeyField, primaryKeyValue, field, value } = req.body;
+  const accountId = req.user.accountid; // or extract from token/session
+
+  try {
+    const tableName = `${accountId}_screening_outward`;
+
+    const query = `
+      UPDATE ${tableName}
+      SET ${field} = $1
+      WHERE ${primaryKeyField} = $2
+    `;
+    await pool.query(query, [value, primaryKeyValue]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update failed', err);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
+
 module.exports = router;

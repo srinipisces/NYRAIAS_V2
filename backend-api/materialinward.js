@@ -20,7 +20,7 @@ router.get("/inwardnumber", authenticate, async (req, res) => {
     const query = `
       SELECT inward_number 
       FROM ${table} 
-      WHERE lab_result IS NOT NULL AND material_inward_status IS NULL
+      WHERE lab_result IS NOT NULL AND material_inward_status IS NULL and admit_load != 'Deny'
     `;
 
     const result = await pool.query(query);
@@ -78,7 +78,7 @@ router.get("/inwardweightsummary", authenticate, async (req, res) => {
 });
 
 
-router.post("/crusherload", authenticate, checkAccess('Operations.Material Inward'), async (req, res) => {
+router.post("/crusherload", authenticate, checkAccess('Operations.Raw-Material Inward'), async (req, res) => {
   const { accountid, userid } = req.user;
   const table = `${accountid}_material_inward_bag`;
 
@@ -117,7 +117,7 @@ router.post("/crusherload", authenticate, checkAccess('Operations.Material Inwar
 router.put(
   "/materialinwardcomplete",
   authenticate,
-  checkAccess('Operations.Material Inward'),
+  checkAccess('Operations.Raw-Material Inward'),
   async (req, res) => {
     const { accountid, userid } = req.user; // from decoded JWT
     const { inward_number, remark } = req.body;
@@ -178,7 +178,8 @@ router.get("/material-inward-bagging", authenticate, async (req, res) => {
         a.inward_number = b.inward_number
       WHERE 
         a.material_outward_status IS NULL 
-        AND a.lab_result IS NOT NULL;
+        AND a.lab_result IS NOT NULL
+        and a.admit_load != 'Deny'
     `);
 
     const rows = result.rows;

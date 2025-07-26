@@ -10,20 +10,19 @@ const checkAccess= require('./checkaccess.js');
 // 🛡️ Auth Middleware
 const { authenticate } = require('./authenticate');
 
-
-
-
 router.get("/inwardnumber_outward_select", authenticate, async (req, res) => {
   const { accountid } = req.user;
   const table = `${accountid}_rawmaterial_rcvd`;
+  const table1 = `${accountid}_material_inward_bag`;
 
   try {
     const query = `
-      SELECT inward_number 
-      FROM ${table}
-      WHERE material_inward_status IS NOT NULL 
-        AND material_outward_status IS NULL
-    `;
+      SELECT DISTINCT b.inward_number
+        FROM ${table1} a
+        JOIN ${table} b
+          ON a.inward_number = b.inward_number
+        WHERE b.material_outward_status IS NULL 
+            `;
     
     const result = await pool.query(query);
     const inwardNumbers = result.rows.map(row => row.inward_number);
@@ -152,9 +151,10 @@ WHERE
   }
 });
 
-router.post("/crusheroutput", authenticate,checkAccess('Operations.Material Outward'),async (req, res) => {
+router.post("/crusheroutput", authenticate,checkAccess('Operations.Raw-Material Outward'),async (req, res) => {
     const { userid,accountid } = req.user;
     const table = `${accountid}_material_outward_bag`;
+    const rawtable = `${accountid}_rawmaterial_rcvd`;
     try {
     const text = `
     INSERT INTO ${table}
@@ -177,9 +177,17 @@ router.post("/crusheroutput", authenticate,checkAccess('Operations.Material Outw
       Number(req.body.bag_weight),
       userid
     ];
-    console.log (text,values);
+    
+    await pool.query("BEGIN");
     const result = await pool.query(text, values);
     const newbag_no = result.rows[0].bag_no;
+    await pool.query(
+        `UPDATE ${rawtable}
+         SET kiln_feed_status = null
+         WHERE inward_number = $1`,
+        [req.body.inward_number]
+      );
+    await pool.query("COMMIT");
     res.json({
       operation: 'success',
       bag_no: newbag_no

@@ -8,7 +8,28 @@ router.get("/rawmaterial", authenticate,async(req,res) => {
   try {
     const {accountid} = req.user;
     const table = `${accountid}_rawmaterial_rcvd`
-    const que = `select inward_number,supplier_name,moisture,dust,ad_value,our_weight as weight from ${table} where material_outward_status is null; `
+    const table1 = `${accountid}_material_inward_bag`
+    const que = `SELECT 
+        a.inward_number,
+        a.supplier_name,
+        a.moisture,
+        a.dust,
+        a.ad_value,
+        a.our_weight - COALESCE(b.total_weight, 0) AS weight
+      FROM 
+        ${table} a
+      LEFT JOIN (
+        SELECT 
+          inward_number, 
+          SUM(weight) AS total_weight
+        FROM 
+          ${table1}
+        GROUP BY 
+          inward_number
+      ) b ON a.inward_number = b.inward_number
+      WHERE 
+        a.material_inward_status IS NULL;
+      `
     const result = await pool.query(que);
 
     const RawData = result.rows
@@ -40,9 +61,10 @@ router.get("/gcharcoal", authenticate,async(req,res) => {
             b.supplier_name,
 
             -- Component weights
-            SUM(CASE WHEN a.grade NOT IN ('Stones', 'Unburnt') THEN a.weight ELSE 0 END) AS weight,
+            SUM(CASE WHEN a.grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B') THEN a.weight ELSE 0 END) AS weight,
             SUM(CASE WHEN a.grade = 'Stones' THEN a.weight ELSE 0 END) AS total_stone_weight,
             SUM(CASE WHEN a.grade = 'Unburnt' THEN a.weight ELSE 0 END) AS total_unburnt_weight,
+            SUM(CASE WHEN a.grade like '-20%' THEN a.weight ELSE 0 END) AS total_minus_weight,
 
             -- Total (all grades combined)
             SUM(a.weight) AS total_weight,
@@ -50,7 +72,8 @@ router.get("/gcharcoal", authenticate,async(req,res) => {
             -- Percentages relative to total weight
             ROUND(SUM(CASE WHEN a.grade = 'Stones' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_stone,
             ROUND(SUM(CASE WHEN a.grade = 'Unburnt' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_unburnt,
-            ROUND(SUM(CASE WHEN a.grade NOT IN ('Stones', 'Unburnt') THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_gcharcoal
+            ROUND(SUM(CASE WHEN a.grade like '-20%' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_minus20,
+            ROUND(SUM(CASE WHEN a.grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B') THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_gcharcoal
 
             FROM ${accountid}_material_outward_bag a
             LEFT JOIN ${accountid}_rawmaterial_rcvd b
@@ -85,7 +108,8 @@ router.get("/gcharcoal", authenticate,async(req,res) => {
         inward_number: row.inward_number,
         percent_gcharcoal: parseFloat(row.percent_gcharcoal),
         percent_stone: parseFloat(row.percent_stone),
-        percent_unburnt: parseFloat(row.percent_unburnt)
+        percent_unburnt: parseFloat(row.percent_unburnt),
+        percent_minus20: parseFloat(row.percent_minus20)
         }));
 
     res.json({ data : {GCharcoal_chartData,GCharcoal_chart_keys,GCharcoal_stock,GCharcoal_percent_stacked }});

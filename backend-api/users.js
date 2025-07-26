@@ -12,7 +12,7 @@ const JWT_SECRET = process.env.JWT_SECRET;
 const checkAccess= require('./checkaccess.js');
 
 
-console.log("inseide users and trying to listall");
+
 
 //login
 router.post('/login', async (req, res) => {
@@ -25,8 +25,9 @@ router.post('/login', async (req, res) => {
   const tableName = `${accountid}_authentication`;
 
   try {
+    // 1. Validate credentials from the tenant's auth table
     const result = await pool.query(
-      `SELECT password, access FROM ${tableName} WHERE userid = $1 and status = true`,
+      `SELECT password, access FROM ${tableName} WHERE userid = $1 AND status = true`,
       [userid]
     );
 
@@ -39,26 +40,57 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ message: 'Invalid userid or password' });
     }
 
+    // 2. Get route info for the account
+    const routeResult = await pool.query(
+      `SELECT route FROM account_route_config WHERE accountid = $1`,
+      [accountid]
+    );
+
+    if (routeResult.rows.length === 0) {
+      return res.status(400).json({ message: `Route not configured for account '${accountid}'` });
+    }
+
+    let rawRoute = routeResult.rows[0].route; // e.g. "/activatedcarbon/$accountid" or "/restaurant/a2b"
+    let route = rawRoute.includes('$accountid')
+      ? rawRoute.replace('$accountid', accountid)
+      : rawRoute;
+
+    // Optional: extract vertical from first path segment
+    const vertical = route.split('/').filter(Boolean)[0] || '';
+
+    // 3. Generate JWT
     const token = jwt.sign(
-      { userid, accountid, access: result.rows[0].access },
+      {
+        userid,
+        accountid,
+        access: result.rows[0].access,
+        vertical,
+      },
       JWT_SECRET,
       { expiresIn: '8h' }
     );
 
-    const expiresAt = new Date(Date.now() + 8 * 3600 * 1000);
+    // 4. Store token in DB (for session tracking or invalidation)
+    const expiresAt = new Date(Date.now() + 8 * 3600 * 1000); // 8 hours from now
     await pool.query(
       'INSERT INTO active_tokens (token, userid, accountid, expires_at) VALUES ($1, $2, $3, $4)',
       [token, userid, accountid, expiresAt]
     );
 
+    // 5. Set token cookie and send response
     res
       .cookie('token', token, {
         httpOnly: true,
-        secure: false, // use false for local testing only
+        secure: false, // true in production with HTTPS
         sameSite: 'Strict',
         maxAge: 8 * 3600 * 1000, // 8 hours
       })
-      .json({ success: true });
+      .json({
+        success: true,
+        route,       // e.g. "/activatedcarbon/samcarbons"
+        accountid,   // e.g. "samcarbons"
+        vertical     // e.g. "activatedcarbon"
+      });
 
   } catch (err) {
     if (err.code === '42P01') {
@@ -85,14 +117,11 @@ router.get('/validate-token', authenticate, async (req, res) => {
 
   const { userid, accountid, access } = req.user;
 
-
   try {
     const result = await pool.query(
       'SELECT 1 FROM active_tokens WHERE token = $1 AND userid = $2 AND accountid = $3',
       [token, userid, accountid]
     );
-
-    
 
     if (result.rows.length === 0) {
       console.log('❌ Token not found in active_tokens table');
@@ -104,14 +133,31 @@ router.get('/validate-token', authenticate, async (req, res) => {
       return res.status(401).json({ message: 'Token is no longer active' });
     }
 
-    res.json({ userid, accountid, access });
+    // 🔄 Fetch route from account_route_config
+    const routeResult = await pool.query(
+      'SELECT route FROM account_route_config WHERE accountid = $1',
+      [accountid]
+    );
+
+    if (routeResult.rows.length === 0) {
+      return res.status(404).json({ message: `No route found for account '${accountid}'` });
+    }
+
+    const rawRoute = routeResult.rows[0].route;
+    const route = rawRoute.includes('$accountid')
+      ? rawRoute.replace('$accountid', accountid)
+      : rawRoute;
+
+    const vertical = route.split('/').filter(Boolean)[0] || '';
+
+    res.json({ userid, accountid, access, route, vertical });
   } catch (err) {
     console.error('Token validation error:', err);
     res.clearCookie('token', {
-        httpOnly: true,
-        secure: false,
-        sameSite: 'Lax',
-      });
+      httpOnly: true,
+      secure: false,
+      sameSite: 'Lax',
+    });
     res.status(500).json({ message: 'Server error validating token' });
   }
 });
@@ -420,6 +466,41 @@ router.post('/logout', authenticate, async (req, res) => {
     res.status(500).json({ message: 'Server error during logout' });
   }
 });
+
+router.get('/branding', authenticate, async (req, res) => {
+  const { accountid } = req.user;
+
+  try {
+    const result = await pool.query(
+      'SELECT route, logo, logo_text FROM account_route_config WHERE accountid = $1',
+      [accountid]
+    );
+
+    if (result.rows.length === 0) {
+      return res.status(404).json({ message: 'Branding not found for this account' });
+    }
+
+    let { route, logo, logo_text } = result.rows[0];
+
+    // Replace $accountid placeholder if present
+    if (route.includes('$accountid')) {
+      route = route.replace('$accountid', accountid);
+    }
+
+    const logoUrl = logo ? `/static-logos/${logo.replace(/^\/+/, '')}` : null;
+
+    res.json({
+      accountid,
+      route,
+      logo: logoUrl,
+      logo_text: logo_text || null,
+    });
+  } catch (err) {
+    console.error('Error fetching branding:', err);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
 
 
 module.exports = router;
