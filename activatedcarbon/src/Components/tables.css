@@ -1,0 +1,41 @@
+.kiln-table-container {
+    overflow-x: auto;
+    padding: 1rem;
+    font-family: Arial, sans-serif;
+     /* style={{ overflowX: 'auto', padding: '1rem', fontFamily: 'Arial' }} */
+  }
+  
+  .kiln-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 10px;
+    border: 2px solid #ccc;
+  }
+  
+  .kiln-table th {
+    padding: 6px;
+    font-size: 12px;
+    font-weight: bold;
+    border: 2px solid #ccc;
+    text-align: left;
+    white-space: nowrap;
+    background-color: #e0e0e0;
+  }
+  
+  .kiln-table td {
+    padding: 4px;
+    font-size: 12px;
+    border: 2px solid #ddd;
+    white-space: nowrap;
+  }
+  .table_span{
+    font-family: Arial, sans-serif;
+    font-size: 15px;
+    font-weight: bold;
+    border-bottom: 2px solid;
+    border-color: #858181f4;
+    padding-bottom: 1px;
+    border-radius: 4px;
+    display: inline-block;
+  }
+  
