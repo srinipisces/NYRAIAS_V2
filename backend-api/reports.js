@@ -305,74 +305,46 @@ router.post("/rms_performance", authenticate, async (req, res) => {
     const { page = 1, limit = 10 } = req.body;
     const offset = (page - 1) * limit;
 
-    const materialOutwardTable = `${accountid}_material_outward_bag`;
+    const material_hist = `${accountid}_rawmaterial_inward_history`;
     const rawMaterialTable = `${accountid}_rawmaterial_rcvd`;
     const materialInwardTable = `${accountid}_material_inward_bag`;
 
     // Main paginated query
     const dataQuery = `
-      SELECT
-          a.inward_number,
-          c.material_outward_status,
-          c.material_inward_status,
-          c.kiln_feed_status,
-          c.supplier_name,
-          c.supplier_weight as supplier_weight,
-          c.our_weight as weight_at_security,
-          COALESCE(b.inward_weight, 0) AS RMS_inward_weight,
-          (COALESCE(b.inward_weight, 0)-c.our_weight) as RMS_inward_loss,
-          SUM(CASE WHEN a.grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B') THEN a.weight ELSE 0 END) AS Grade_Weight,
-          SUM(CASE WHEN a.grade = 'Grade 1st stage - Rotary A' THEN a.weight ELSE 0 END) AS Grade_A,
-          SUM(CASE WHEN a.grade = 'Grade 2nd stage - Rotary B' THEN a.weight ELSE 0 END) AS Grade_B,
-          SUM(CASE WHEN a.grade = 'Stones' THEN a.weight ELSE 0 END) AS total_stone_weight,
-          SUM(CASE WHEN a.grade = 'Unburnt' THEN a.weight ELSE 0 END) AS total_unburnt_weight,
-          SUM(CASE WHEN a.grade = '-20 2nd Stage - Rotary B' THEN a.weight ELSE 0 END) AS total_20B,
-          SUM(CASE WHEN a.grade = '-20  1st Stage - Rotary A' THEN a.weight ELSE 0 END) AS total_20A,
-          SUM(CASE WHEN a.grade NOT IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B') THEN a.weight ELSE 0 END) AS Total_Physical_Loss,
-          SUM(a.weight) AS RMS_outward_weight,
-          SUM(a.weight)-COALESCE(b.inward_weight, 0)  as RMS_Processing_Loss,
-          SUM(a.weight)-COALESCE(b.inward_weight, 0) + (COALESCE(b.inward_weight, 0)-c.our_weight) as RMS_Total_Loss,
-          round(((SUM(a.weight)-COALESCE(b.inward_weight, 0) + (COALESCE(b.inward_weight, 0)-c.our_weight)) / our_weight)*100,2)
-          SUM(a.kiln_loaded_weight) as kiln_loaded_weight
-      FROM ${materialOutwardTable} a
-      LEFT JOIN (
-          SELECT inward_number, SUM(weight) AS inward_weight
-          FROM ${materialInwardTable}
-          GROUP BY inward_number
-      ) b ON a.inward_number = b.inward_number
-      LEFT JOIN (
-          SELECT inward_number, supplier_name,our_weight,supplier_weight,material_outward_status,
-          material_inward_status,kiln_feed_status
-          FROM ${rawMaterialTable}
-      ) c ON a.inward_number = c.inward_number
-      GROUP BY a.inward_number, c.supplier_name, b.inward_weight,c.supplier_weight,c.our_weight,c.material_outward_status,
-          c.material_inward_status,c.kiln_feed_status
-      ORDER BY a.inward_number
-      LIMIT $1 OFFSET $2;
+      SELECT DISTINCT ON (inward_number)
+      day,
+      inward_number,
+      supplier_name,
+      supplier_weight,
+      weight_at_security,
+      raw_material_inward_weight,
+      raw_material_inward_loss_or_gain,
+      raw_material_inward_status,
+      raw_material_outward_status,
+      Gcharcoal_Weight_after_crusher,
+      Physical_Loss_in_crusher,
+      Total_weight_from_crusher,
+      kiln_loaded_weight,
+      raw_material_inward_weight as RMS_inward_weight,
+      (raw_material_inward_weight - weight_at_security) as RMS_inward_loss,
+      Gcharcoal_Weight_after_crusher as RMS_outward_weight,
+      (Gcharcoal_Weight_after_crusher-raw_material_inward_weight) as RMS_Processing_Loss,
+      (raw_material_inward_weight - weight_at_security) + (Gcharcoal_Weight_after_crusher-raw_material_inward_weight) as RMS_Total_Loss
+      FROM ${material_hist}
+      ORDER BY inward_number, day DESC;
     `;
 
-    // Total count (without LIMIT/OFFSET)
-    const countQuery = `
-      SELECT COUNT(*) FROM (
-        SELECT a.inward_number
-        FROM ${materialOutwardTable} a
-        LEFT JOIN ${rawMaterialTable} b
-          ON a.inward_number = b.inward_number
-        WHERE a.kiln_feed_status IS NULL
-        GROUP BY a.inward_number, b.supplier_name
-      ) AS subquery;
-    `;
 
-    const dataResult = await pool.query(dataQuery, [limit, offset]);
-    const countResult = await pool.query(countQuery);
+
+    const dataResult = await pool.query(dataQuery);
+  
 
     const rows = dataResult.rows;
-    const total = parseInt(countResult.rows[0].count, 10);
     const columns = Object.keys(rows[0] || {});
 
-    res.json({ columns, rows, total });
+    res.json({ columns, rows});
   } catch (err) {
-    console.error('Error in /granulated_charcoal_in-stock:', err);
+    console.error('Error in /rms_performance:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });

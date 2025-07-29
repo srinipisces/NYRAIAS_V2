@@ -41,6 +41,7 @@ pool.connect()
     app.use('/api/dashboard', require('./dashboard'));
     app.use('/api/reports', require('./reports'));
     app.use('/api/settings', require('./settings'));
+    app.use('/api/destoning', require('./destoning'));
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {

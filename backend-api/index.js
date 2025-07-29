@@ -15,7 +15,7 @@ let dbConnected = false;
 
 // 🛡️ Auth Middleware
 const { authenticate } = require('./authenticate');
-
+const dayjs = require('dayjs'); 
 
 
 // --- final
@@ -67,6 +67,7 @@ router.get("/gcharcoalstock", async(req,res) => {
 
 //// security
 router.post("/materialatgate", authenticate, checkAccess("Operations.Security"), async (req, res) => {
+  const client = await pool.connect();
   try {
     const { userid, accountid } = req.user;
     const {
@@ -78,7 +79,8 @@ router.post("/materialatgate", authenticate, checkAccess("Operations.Security"),
       our_weight
     } = req.body;
 
-    const table = `${accountid}_rawmaterial_rcvd`;
+    const rcvdTable = `${accountid}_rawmaterial_rcvd`;
+    const historyTable = `${accountid}_rawmaterial_inward_history`;
 
     // Create activity log
     const activities = [{
@@ -87,39 +89,66 @@ router.post("/materialatgate", authenticate, checkAccess("Operations.Security"),
       performedBy: userid,
     }];
 
-    const text = `
-      INSERT INTO ${table}
-        (
-          material_arrivaltime,
-          supplier_name,
-          supplier_weight,
-          supplier_value,
-          supplier_dc_number,
-          our_weight,
-          userid,
-          deleted,
-          activities
-        )
-      VALUES
-        ($1, $2, $3, $4, $5, $6, $7, false, $8)
+    await client.query('BEGIN');
+
+    // Step 1: Insert into rawmaterial_rcvd
+    const insertRcvdQuery = `
+      INSERT INTO ${rcvdTable} (
+        material_arrivaltime,
+        supplier_name,
+        supplier_weight,
+        supplier_value,
+        supplier_dc_number,
+        our_weight,
+        userid,
+        deleted,
+        activities
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, false, $8)
       RETURNING inward_number;
     `;
 
-    const values = [
+    const insertRcvdValues = [
       rawmaterial_entryDateTime,
       supplier,
       Number(supplier_weight),
-      Number(supplier_value || 0), // default to 0 if not provided
+      Number(supplier_value || 0),
       supplier_dc_number,
       Number(our_weight),
       userid,
       JSON.stringify(activities)
     ];
 
-    console.log("insert into material_inward_atgate", text, values);
-
-    const result = await pool.query(text, values);
+    const result = await client.query(insertRcvdQuery, insertRcvdValues);
     const newInwardNumber = result.rows[0].inward_number;
+
+    // Step 2: Insert into rawmaterial_inward_stock_history
+    const formattedDay = dayjs(rawmaterial_entryDateTime).format('YYYY-MM-DD');
+
+    const insertHistoryQuery = `
+      INSERT INTO ${historyTable} (
+        day,
+        inward_number,
+        supplier_name,
+        supplier_weight,
+        weight_at_security,
+        raw_material_inward_weight,
+        raw_material_inward_stock,
+        raw_material_inward_loss_or_gain
+      )
+
+      VALUES ($1::date, $2, $3, $4, $5, 0, $5, NULL);
+    `;
+
+    await client.query(insertHistoryQuery, [
+      formattedDay,
+      newInwardNumber,
+      supplier,
+      Number(supplier_weight),
+      Number(our_weight)
+    ]);
+
+    await client.query('COMMIT');
 
     res.json({
       operation: 'success',
@@ -127,10 +156,14 @@ router.post("/materialatgate", authenticate, checkAccess("Operations.Security"),
     });
 
   } catch (err) {
-    console.error("Insert error in /materialatgate:", err);
+    await client.query('ROLLBACK');
+    console.error(`[${new Date().toISOString()}] Insert error in /materialatgate:`, err);
     res.status(500).json({ operation: 'error', message: err.message });
+  } finally {
+    client.release();
   }
 });
+
 
 //---final
 router.get("/RawMaterialIncoming", authenticate, async (req, res) => {

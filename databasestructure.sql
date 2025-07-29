@@ -269,6 +269,73 @@ stock_upd_user text,
 stock_upd_dt timestamp);
 
 
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_nyra_kiln_output()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  date_str TEXT;
+  kiln_suffix TEXT;
+  prefix TEXT;
+  prefix1 text;
+  last_counter INTEGER;
+  last_bag_no TEXT;
+BEGIN
+  IF NEW.bag_no IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- Validate format begins with "Kiln "
+  IF NEW.from_the_kiln IS NULL OR POSITION('Kiln ' IN NEW.from_the_kiln) <> 1 THEN
+    RAISE EXCEPTION 'Invalid from_the_kiln: must begin with "Kiln "';
+  END IF;
+
+  -- Extract everything after "Kiln "
+  kiln_suffix := TRIM(SUBSTRING(NEW.from_the_kiln FROM 6));
+
+  IF kiln_suffix = '' THEN
+    RAISE EXCEPTION 'Invalid from_the_kiln: no text found after "Kiln "';
+  END IF;
+
+  -- Format date as DDMMYY
+  date_str := TO_CHAR(NEW.kiln_output_dt, 'DDMMYY');
+
+  -- Build prefix
+  prefix1 := 'KO' || kiln_suffix ;
+
+  -- Lock globally (not prefix-specific anymore)
+  PERFORM pg_advisory_xact_lock(hashtext('global_kiln_output_bag'));
+
+  -- Find last inserted bag_no (sorted descending)
+  SELECT bag_no
+  INTO last_bag_no
+  FROM nyra_kiln_output
+  WHERE bag_no like prefix1 || '_%'
+  ORDER BY CAST(RIGHT(bag_no, 4) AS INTEGER) DESC
+  LIMIT 1; 
+ 
+  
+  prefix := 'KO' || kiln_suffix || '_' || date_str || '_';
+
+  IF last_bag_no IS NULL THEN
+    last_counter := 1001;
+  ELSE
+    -- Extract last 4-digit number
+    last_counter := CAST(RIGHT(last_bag_no, 4) AS INTEGER) + 1;
+  END IF;
+
+  IF last_counter > 9999 THEN
+    RAISE EXCEPTION 'Exceeded global bag_no limit (9999)';
+  END IF;
+
+  NEW.bag_no := prefix || LPAD(last_counter::TEXT, 4, '0');
+
+  RETURN NEW;
+END;
+$$;
+
+
+/*  changed from day wise reset to running number in new trigger
 CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_kiln_output()
 RETURNS TRIGGER
 LANGUAGE plpgsql
@@ -325,13 +392,13 @@ BEGIN
 
   RETURN NEW;
 END;
-$$;
+$$; */
 
-drop TRIGGER trg_before_insert_testbed_kiln_output on testbed_kiln_output;
-CREATE or replace TRIGGER trg_before_insert_testbed_kiln_output
-BEFORE INSERT ON testbed_kiln_output
+drop TRIGGER trg_before_insert_nyra_kiln_output on nyra_kiln_output;
+CREATE or replace TRIGGER trg_before_insert_nyra_kiln_output
+BEFORE INSERT ON nyra_kiln_output
 FOR EACH ROW
-EXECUTE FUNCTION trg_set_bag_no_per_testbed_kiln_output();
+EXECUTE FUNCTION trg_set_bag_no_per_nyra_kiln_output();
 
 
  /*  old function --- new one above has the new naming format..
@@ -493,8 +560,8 @@ create table testbed_rms_performance
           kiln_loaded_weight numeric);
 
 
-create table samcarbons_rawmaterial_inward_history (
-            Date timestamp,
+create table nyra_rawmaterial_inward_history (
+            day timestamp,
             inward_number text,
             supplier_name text,
             supplier_weight numeric,
@@ -511,5 +578,91 @@ create table samcarbons_rawmaterial_inward_history (
             Total_weight_from_crusher numeric,
             kiln_loaded_weight numeric,
             kiln_load_no_bags numeric,
-            kiln_feed_status timestamp
+            kiln_feed_status timestamp,
+            Gcharcoal_stock numeric
         );
+
+
+
+CREATE OR REPLACE FUNCTION activatedcarbon_get_stock_balances(
+  accountid TEXT,
+  start_date DATE,
+  end_date DATE
+)
+RETURNS TABLE (
+  day DATE,
+  opening_raw_material_stock_balance NUMERIC,
+  closing_raw_material_stock_balance NUMERIC,
+  gcharcoal_opening_balance NUMERIC,
+  gcharcoal_closing_balance NUMERIC
+)
+AS $$
+DECLARE
+  dyn_sql TEXT;
+BEGIN
+  dyn_sql := format($f$
+    WITH date_series AS (
+      SELECT generate_series(DATE %L, DATE %L, interval '1 day')::date AS day
+    ),
+    daily_totals AS (
+      SELECT
+        DATE(day) AS day,
+        COALESCE(SUM(raw_material_inward_stock), 0) AS raw_stock,
+        COALESCE(SUM(Gcharcoal_stock), 0) AS gcharcoal_stock
+      FROM %I_rawmaterial_inward_history
+      GROUP BY DATE(day)
+    ),
+    cumulative AS (
+      SELECT
+        ds.day,
+        COALESCE(SUM(dt.raw_stock) OVER (ORDER BY ds.day), 0) AS closing_raw_stock,
+        COALESCE(SUM(dt.gcharcoal_stock) OVER (ORDER BY ds.day), 0) AS closing_gcharcoal
+      FROM date_series ds
+      LEFT JOIN daily_totals dt ON dt.day = ds.day
+    )
+    SELECT
+      day,
+      LAG(closing_raw_stock, 1, 0) OVER (ORDER BY day),
+      closing_raw_stock,
+      LAG(closing_gcharcoal, 1, 0) OVER (ORDER BY day),
+      closing_gcharcoal
+    FROM cumulative
+    ORDER BY day
+  $f$, start_date, end_date, accountid);
+
+  RETURN QUERY EXECUTE dyn_sql;
+END;
+$$ LANGUAGE plpgsql;
+
+drop table samcarbons_destoning;
+CREATE TABLE samcarbons_destoning (
+  write_timestamp TIMESTAMP DEFAULT NOW(),
+  ds_bag_no TEXT unique,                  -- generated on submission
+  loaded_weight NUMERIC,                       -- sum of loaded bags
+  loaded_bags TEXT[],                          -- array of bag numbers
+  final_destination , -- either 'Screening' or 'InStock'
+  weight_out numeric, 
+  userid text,
+  quality_updt_time timestamp,
+  quality_plus_3 numeric,
+  quality_3by4 numeric,
+  quality_4by8 numeric,
+  quality_8by12 numeric,
+  quality_12by30 numeric,
+  quality_minus_30 numeric,
+  quality_cbd numeric,
+  quality_ctc numeric,
+  quality_remarks text,
+  quality_updt_user text,
+  stock_upd_user text, 
+  stock_upd_dt timestamp  
+);
+-- Drop primary key constraint (if it exists)
+ALTER TABLE nyra_destoning DROP CONSTRAINT nyra_destoning_pkey;
+
+-- Add UNIQUE constraint instead
+ALTER TABLE nyra_destoning ADD CONSTRAINT unique_ds_bag_no UNIQUE (ds_bag_no);
+
+
+
+

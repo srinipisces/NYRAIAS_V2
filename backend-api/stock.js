@@ -8,7 +8,7 @@ const checkAccess = require('./checkaccess');
 
 router.get('/instock', authenticate, async (req, res) => {
   const { accountid } = req.user;
-  const kilnTable = `${accountid}_kiln_output`;
+  const kilnTable = `${accountid}_destoning`;
   const screenTable = `${accountid}_screening_outward`;
 
   // Pagination inputs
@@ -19,9 +19,9 @@ router.get('/instock', authenticate, async (req, res) => {
   try {
     // 1. Paginated query with UNION ALL
     const dataQuery = `
-      SELECT bag_no, weight_with_stones AS weight, exkiln_stock AS delivery_status
+      SELECT ds_bag_no as bag_no, weight_out AS weight, final_destination AS delivery_status
       FROM ${kilnTable}
-      WHERE exkiln_stock = 'InStock'
+      WHERE final_destination = 'InStock'
 
       UNION ALL
 
@@ -37,7 +37,7 @@ router.get('/instock', authenticate, async (req, res) => {
     // 2. Total count query
     const countQuery = `
       SELECT (
-        SELECT COUNT(*) FROM ${kilnTable} WHERE exkiln_stock = 'InStock'
+        SELECT COUNT(*) FROM ${kilnTable} WHERE final_destination = 'InStock'
       ) + (
         SELECT COUNT(*) FROM ${screenTable} WHERE delivery_status = 'InStock'
       ) AS total
@@ -78,17 +78,17 @@ router.get('/filter', authenticate, async (req, res) => {
       AND delivery_status = 'InStock'
     `;
     values = [`%${search}%`];
-  } else if (prefix === 'K') {
-    table = `${accountid}_kiln_output`;
+  } else if (prefix === 'D') {
+    table = `${accountid}_destoning`;
     query = `
-      SELECT bag_no, weight_with_stones AS weight, exkiln_stock AS delivery_status
+      SELECT ds_bag_no bag_no, weight_out AS weight, final_destination AS delivery_status
       FROM ${table}
-      WHERE bag_no ILIKE $1
-      AND exkiln_stock = 'InStock'
+      WHERE ds_bag_no ILIKE $1
+      AND final_destination = 'InStock'
     `;
     values = [`%${search}%`];
   } else {
-    return res.status(400).json({ message: 'Search must begin with S or K' });
+    return res.status(400).json({ message: 'Search must begin with S or D' });
   }
 
   try {
@@ -121,17 +121,17 @@ router.put('/bulk-update', authenticate, checkAccess('Operations.Stock'),async (
       stock_change_dt = current_timestamp 
       WHERE bag_no ILIKE $2
     `;
-  } else if (prefix === 'K') {
-    table = `${accountid}_kiln_output`;
+  } else if (prefix === 'D') {
+    table = `${accountid}_destoning`;
     updateQuery = `
       UPDATE ${table}
-      SET exkiln_stock = $1,
+      SET final_destination = $1,
       stock_upd_user = $3,
       stock_upd_dt = current_timestamp
-      WHERE bag_no ILIKE $2
+      WHERE ds_bag_no ILIKE $2
     `;
   } else {
-    return res.status(400).json({ message: 'SearchText must begin with S or K' });
+    return res.status(400).json({ message: 'SearchText must begin with S or D' });
   }
 
   try {
@@ -164,14 +164,14 @@ router.put('/singleupdate/:bag_no', authenticate, checkAccess('Operations.Stock'
       stock_change_dt = current_timestamp 
       WHERE bag_no = $2
     `;
-  } else if (prefix === 'K') {
-    table = `${accountid}_kiln_output`;
+  } else if (prefix === 'D') {
+    table = `${accountid}_destoning`;
     updateQuery = `
       UPDATE ${table}
-      SET exkiln_stock = $1,
+      SET final_destination = $1,
       stock_upd_user = $3,
       stock_upd_dt = current_timestamp
-      WHERE bag_no = $2
+      WHERE ds_bag_no = $2
     `;
   } else {
     return res.status(400).json({ message: 'Bag number must start with S or K' });

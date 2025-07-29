@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { Divider ,Box} from '../../node_modules/@mui/material';
-import DeStoningLoader from '../FormsTab/De-Stoningv2';
+import SearchBar from './SearchBar'
+import DeStoningFormTab_out from '../FormsTab/DeStoningFormTab_out';
+import DeStoningTable from '../Tables/De-StoningTable'; 
 
 export default function DeStoningTab() {
 
@@ -12,8 +14,9 @@ export default function DeStoningTab() {
   return (
     <Box>
       <h3>De-Stoning Out</h3>
-      <DeStoningLoader/>
-      
+      <DeStoningFormTab_out onSuccess={handleRefreshTable}/>
+      <SearchBar onSearch={handleSearch} />
+      <DeStoningTable key={refreshKey}/>
     </Box>
   );
 }

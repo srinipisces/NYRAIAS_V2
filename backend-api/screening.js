@@ -18,21 +18,17 @@ const { authenticate } = require('./authenticate');
 
 router.get("/screeninginwardbagno",authenticate, async(req,res) => {
     const {accountid} = req.user;
-    const table = `${accountid}_kiln_output`
+    const table = `${accountid}_destoning`
     const table2 = `${accountid}_screening_outward`
     let que =''
     let values = []
   try {
-    const kiln = req.query.kiln;
     
-    if (kiln==='Re-Screening'){
-      que = `select bag_no from ${table2} where delivery_status = 'Screening' and reload ='InQue'`
-    }
-    else {
-      que = `select bag_no from ${table} where screening_inward_time is null and exkiln_stock = 'Screening' and from_the_kiln=$1`,
-      values = [kiln]
-    }       
-    const result = await pool.query(que,values);
+    
+      que = `select bag_no as bag_no from ${table2} where delivery_status = 'Screening' and reload ='InQue' union
+      select ds_bag_no as bag_no from ${table} where final_destination = 'Screening'`
+          
+    const result = await pool.query(que);
     const inwardNumbers = result.rows.map(row => row.bag_no);
     res.json(inwardNumbers);
   } catch (err) {
@@ -77,16 +73,13 @@ router.post("/ScreeningInward", authenticate,checkAccess('Operations.Screening I
         UPDATE ${table} set
         reload ='loaded',
         reload_time =$1,
-        reload_kiln = $2,
-        reload_machine =$5,
-        reload_output_required = $6,
-        reload_userid = $7,
-        reload_bag_weight = $8,
-        exkiln_stock = 'ScreeningCompleted'
-        where bag_no = $9
+        reload_machine =$2,
+        reload_output_required = $3,
+        reload_userid = $4,
+        reload_bag_weight = $5
+        where bag_no = $6
       `;
       values = [req.body.date_time,
-        req.body.kiln,
         req.body.machine,
         req.body.output_required,
         userid,
@@ -95,20 +88,18 @@ router.post("/ScreeningInward", authenticate,checkAccess('Operations.Screening I
        ];
       
       const result = await pool.query(que,values);
-    } else if (prefix === 'K') {
-      table = `${accountid}_kiln_output`;
+    } else if (prefix === 'D') {
+      table = `${accountid}_destoning`;
       que = `update ${table} 
       set screening_inward_time = $1,
-      screening_inward_kiln = $2,
-      screening_machine =$6,
-      userid_screening_inward = $8,
-      screening_output_required = $7,
-      exkiln_stock = 'Screening',
-      screening_bag_weight = $9  
-      where bag_no = $3`
+      screening_machine =$3,
+      userid_screening_inward = $5,
+      screening_output_required = $4,
+      final_destination = 'ScreeningCompleted',
+      screening_bag_weight = $6  
+      where ds_bag_no = $2`
 
       values = [req.body.date_time,
-        req.body.kiln,
         req.body.bag_no,
         req.body.machine,
         req.body.output_required,
@@ -118,7 +109,7 @@ router.post("/ScreeningInward", authenticate,checkAccess('Operations.Screening I
       const result = await pool.query(que,values);
 
     } else {
-      return res.status(400).json({ message: 'Bag number must start with S or K' });
+      return res.status(400).json({ message: 'Bag number must start with D or S' });
     }
   
     

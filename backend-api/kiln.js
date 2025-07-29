@@ -8,7 +8,7 @@ const pool = require('./db.js');
 const JWT_SECRET = process.env.JWT_SECRET;
 const checkAccess= require('./checkaccess.js');
 
-
+const { getKolkataDayString, formatToKolkataDay } = require('./date');
 let dbConnected = false;
 
 
@@ -56,61 +56,157 @@ router.get("/inwardnumber_kilnfeed_bag_no_select", authenticate,async(req,res) =
   }
 })
 
-router.post("/kilnfeed", authenticate,checkAccess('Operations.Kiln Feed'),async (req, res) => {
-  const {userid,accountid} = req.user;
-  const rawtable = `${accountid}_rawmaterial_rcvd`
-  const table = `${accountid}_material_outward_bag`
+router.post("/kilnfeed", authenticate, checkAccess('Operations.Kiln Feed'), async (req, res) => {
+  const { userid, accountid } = req.user;
+  const rawtable = `${accountid}_rawmaterial_rcvd`;
+  const table = `${accountid}_material_outward_bag`;
+  const historyTable = `${accountid}_rawmaterial_inward_history`;
+
+  const { inward_number, bag_no, bags_loaded_for, kiln_loaded_bag_weight } = req.body;
+  const day = getKolkataDayString(); // 'YYYY-MM-DD'
+
+  let client;
+
   try {
-    const { inward_number, bag_no, bags_loaded_for,kiln_loaded_bag_weight } = req.body;
+    client = await pool.connect();
+    await client.query("BEGIN");
 
-    const ins_columns = `update ${table} 
-    set kiln_load_time = current_timestamp,
-    kiln = $3, kiln_feed_status = 'loaded',kiln_loaded_weight=$4 
-    where inward_number = $1 and bag_no =$2`
-    
-
-    await pool.query("BEGIN");
-
-    // Insert the kiln feed record
-    await pool.query(
-      `${ins_columns}`,
-      [inward_number, bag_no, bags_loaded_for,kiln_loaded_bag_weight]
+    // ✅ Pre-check: is this bag already loaded?
+    const preCheck = await client.query(
+      `SELECT 1 FROM ${table}
+       WHERE inward_number = $1 AND bag_no = $2 AND kiln_feed_status = 'loaded'`,
+      [inward_number, bag_no]
     );
 
+    if (preCheck.rowCount > 0) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({ error: "Bag is already loaded in kiln" });
+    }
 
-    // Check if all bags for this inward_number are loaded
-    const checkResult = await pool.query(
+    // ✅ 1. Mark bag as loaded
+    await client.query(
+      `UPDATE ${table} 
+       SET kiln_load_time = current_timestamp,
+           kiln = $3,
+           kiln_feed_status = 'loaded',
+           kiln_loaded_weight = $4 
+       WHERE inward_number = $1 AND bag_no = $2`,
+      [inward_number, bag_no, bags_loaded_for, kiln_loaded_bag_weight]
+    );
+
+    // ✅ 2. Check if all bags for this inward_number are loaded
+    const checkResult = await client.query(
       `SELECT COUNT(*) FILTER (WHERE kiln_feed_status IS DISTINCT FROM 'loaded') AS pending
        FROM ${table}
-       WHERE inward_number = $1 and grade in('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
+       WHERE inward_number = $1
+         AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
       [inward_number]
     );
 
     const pending = parseInt(checkResult.rows[0].pending, 10);
 
-    // If no pending bags, mark rawmaterial_rcvd as 'completed'
     if (pending === 0) {
-      await pool.query(
+      await client.query(
         `UPDATE ${rawtable}
          SET kiln_feed_status = 'completed',
-         kiln_feed_status_upddt = current_timestamp,
-         kiln_feed_userid = $2
+             kiln_feed_status_upddt = current_timestamp,
+             kiln_feed_userid = $2
          WHERE inward_number = $1`,
-        [inward_number,userid]
+        [inward_number, userid]
       );
     }
 
-    await pool.query("COMMIT");
+    // ✅ 3. Update or insert into history
+    const historyCheck = await client.query(
+      `SELECT * FROM ${historyTable} WHERE inward_number = $1 AND day::date = $2`,
+      [inward_number, day]
+    );
 
+    if (historyCheck.rowCount > 0) {
+      // 🔄 Update existing history row
+      await client.query(
+        `UPDATE ${historyTable}
+         SET kiln_loaded_weight = COALESCE(kiln_loaded_weight, 0) + $1,
+             kiln_load_no_bags = COALESCE(kiln_load_no_bags, 0) + 1,
+             Gcharcoal_stock = COALESCE(Gcharcoal_stock, 0) - $1
+         WHERE inward_number = $2 AND day::date = $3`,
+        [Number(kiln_loaded_bag_weight), inward_number, day]
+      );
+    } else {
+      // ➕ Insert new row for today
+      const latest = await client.query(
+        `SELECT * FROM ${historyTable} WHERE inward_number = $1 ORDER BY day DESC LIMIT 1`,
+        [inward_number]
+      );
+
+      const base = latest.rows[0] || {};
+
+      const aggResult = await client.query(
+        `SELECT 
+           SUM(kiln_loaded_weight) AS total_weight
+         FROM ${table}
+         WHERE inward_number = $1 
+           AND kiln_feed_status = 'loaded'
+           AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
+        [inward_number]
+      );
+
+      const totalWeight = Number(aggResult.rows[0]?.total_weight || 0);
+      const totalBags = 1; // reset for the day
+      const newGCharcoalStock = (base.gcharcoal_weight_after_crusher || 0) - totalWeight;
+
+      await client.query(
+        `INSERT INTO ${historyTable}
+          (day, inward_number, supplier_name, supplier_weight, weight_at_security,
+           raw_material_inward_no_bags, raw_material_inward_weight, raw_material_inward_stock,
+           raw_material_inward_loss_or_gain, raw_material_inward_status,
+           raw_material_outward_status, raw_material_outward_no_bags,
+           Gcharcoal_Weight_after_crusher, Physical_Loss_in_crusher, Total_weight_from_crusher,
+           kiln_loaded_weight, kiln_load_no_bags, Gcharcoal_stock)
+         VALUES (
+           $1, $2, $3, $4, $5,
+           $6, $7, $8,
+           $9, $10,
+           $11, $12,
+           $13, $14, $15,
+           $16, $17, $18
+         )`,
+        [
+          day,
+          inward_number,
+          base.supplier_name || '',
+          base.supplier_weight || 0,
+          base.weight_at_security || 0,
+          base.raw_material_inward_no_bags || 0,
+          base.raw_material_inward_weight || 0,
+          base.raw_material_inward_stock || 0,
+          base.raw_material_inward_loss_or_gain || 0,
+          base.raw_material_inward_status || null,
+          base.raw_material_outward_status || null,
+          base.raw_material_outward_no_bags || 0,
+          base.gcharcoal_weight_after_crusher || 0,
+          base.physical_loss_in_crusher || 0,
+          base.total_weight_from_crusher || 0,
+          totalWeight,
+          totalBags,
+          newGCharcoalStock
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
     res.json({ operation: 'success' });
-  } catch (err) {
-        const now = new Date();
-    console.error(now.toLocaleString(),":",err);
 
-    await pool.query("ROLLBACK");
+  } catch (err) {
+    console.error(new Date().toLocaleString(), ":", err);
+    if (client) await client.query("ROLLBACK");
     res.status(500).json({ error: "Database error" });
+  } finally {
+    if (client) client.release();
   }
 });
+
+
 
 router.get("/kilnFeedTable", authenticate,async(req,res) => {
   const {accountid} = req.user;

@@ -16,24 +16,12 @@ export default function ScreeningInwardFormTab({onSuccess}) {
       type: 'datetime',
       required: true,
     },
-    {   
-      name: 'kiln',
-      label: 'Kiln : ',
-      type: 'select',
-      required: true,
-      options: [{label: 'Kiln A',value:'Kiln A'},
-      {label: 'Kiln B',value:'Kiln B'},
-      {label: 'Kiln C',value:'Kiln C'},
-      {label: 'Re-Screening',value:'Re-Screening'}]
-    },
     {
       name: 'bag_no',
       label: 'Bag No / Drum No',
       type: 'select',
       required: true,
       optionsFunctionName: 'screening/screeninginwardbagno',
-      dependsOn: 'kiln',
-      getOptionsParams: (watchValues) => ({ kiln: watchValues.kiln }),
     },
     
     {

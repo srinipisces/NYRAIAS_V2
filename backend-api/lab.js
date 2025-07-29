@@ -35,11 +35,25 @@ router.post(
   authenticate,
   checkAccess('Operations.Lab'),
   async (req, res) => {
-    const { userid, accountid } = req.user; // ✅ extract from token
-    const table = `${accountid}_rawmaterial_rcvd`; // ✅ tenant-specific table
+    const { userid, accountid } = req.user;
+    const table = `${accountid}_rawmaterial_rcvd`;
+    const historyTable = `${accountid}_rawmaterial_inward_history`;
+
+    const client = await pool.connect();
 
     try {
-      const query = `
+      const {
+        moisture,
+        dust,
+        ad_value,
+        inward_number,
+        admit_load,
+        remarks
+      } = req.body;
+
+      await client.query('BEGIN');
+
+      const updateQuery = `
         UPDATE ${table}
         SET
           moisture = $1,
@@ -52,29 +66,41 @@ router.post(
         WHERE inward_number = $4
       `;
 
-      const values = [
-        req.body.moisture,
-        req.body.dust,
-        req.body.ad_value,
-        req.body.inward_number,
-        req.body.admit_load,
-        req.body.remarks,
-        userid // ✅ from token, not request body
+      const updateValues = [
+        moisture,
+        dust,
+        ad_value,
+        inward_number,
+        userid,
+        admit_load,
+        remarks
       ];
 
-      const result = await pool.query(query, values);
+      const result = await client.query(updateQuery, updateValues);
 
       if (result.rowCount === 0) {
+        await client.query('ROLLBACK');
         return res.status(404).json({ error: "Inward number not found" });
       }
 
+      if (admit_load === "Deny") {
+        const deleteQuery = `DELETE FROM ${historyTable} WHERE inward_number = $1`;
+        await client.query(deleteQuery, [inward_number]);
+      }
+
+      await client.query('COMMIT');
       res.json({ operation: 'success' });
+
     } catch (err) {
-      console.error("Error updating rawmaterial_rcvd:", err);
+      await client.query('ROLLBACK');
+      console.error("Error in /inwardlabtest:", err);
       res.status(500).json({ error: "Database error" });
+    } finally {
+      client.release();
     }
   }
 );
+
 //lab table view
 router.get("/LabTest_Table", authenticate, async (req, res) => {
   const { accountid } = req.user; // ✅ Get account ID from token

@@ -81,7 +81,7 @@ export default function BoilerPerformanceTab({onSuccess}) {
       type: 'number',
       required: true,
       min :0,
-      max:20
+      max:1500
     },
     {
       name: 'remarks',

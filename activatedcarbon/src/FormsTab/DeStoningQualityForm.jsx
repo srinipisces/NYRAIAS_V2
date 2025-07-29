@@ -5,7 +5,7 @@ import axios from 'axios';
 import './Forms.css';
 import DynamicFormv3 from './DynamicFormv3';
 
-export default function KilnOutputQuality({ onSuccess }) {
+export default function DeStoningQualityForm({ onSuccess }) {
   const formRef = useRef();
   const [submitting, setSubmitting] = useState(false);
 
@@ -15,7 +15,7 @@ export default function KilnOutputQuality({ onSuccess }) {
       label: 'Bag Number',
       type: 'select',
       required: true,
-      optionsFunctionName: 'kiln/kilnoutputbag_quality'
+      optionsFunctionName: 'destoning/bag_quality'
     },
     
     {
@@ -83,6 +83,16 @@ export default function KilnOutputQuality({ onSuccess }) {
       max :100
     },
     {
+      name: 'destination',
+      label: 'Destination',
+      type: 'select',
+      required: true,
+      options: [
+        {label: 'Screening', value: 'Screening'},
+        {label: 'InStock', value: 'InStock'}
+      ]
+    },
+    {
       name: 'quality_remarks',
       label: 'Remarks',
       type: 'text',
@@ -99,7 +109,8 @@ export default function KilnOutputQuality({ onSuccess }) {
     quality_minus_30 :'',
     quality_cbd :'',
     quality_ctc :'',
-    bag_no:''
+    bag_no:'',
+    destination:''
   };
 
   const handleSubmit = async (data) => {
@@ -108,7 +119,7 @@ export default function KilnOutputQuality({ onSuccess }) {
       const payload = { ...data };
 
       const response = await axios.post(
-        import.meta.env.VITE_API_URL + '/api/kiln/kilnoutputquality',
+        import.meta.env.VITE_API_URL + '/api/destoning/destoningquality',
         payload,
         { withCredentials: true }
       );

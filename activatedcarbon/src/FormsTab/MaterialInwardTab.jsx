@@ -66,11 +66,16 @@ export default function InwardLoadForm({ onSuccess }) {
         onSuccess?.();
       }
     } catch (err) {
-      console.error(err);
-      window.alert('Error during submission.');
+      if (err?.response?.status === 409) {
+        window.alert(err.response?.data?.message || '409 Conflict');
+      } else {
+        console.error(err);
+        window.alert('Error during submission.');
+      }
     } finally {
       setLoading(false);
     }
+
   };
 
   const handleFinish = async () => {
@@ -112,11 +117,16 @@ export default function InwardLoadForm({ onSuccess }) {
         onSuccess?.();
       }
     } catch (err) {
-      console.error(err);
-      window.alert('Failed to finish inward.');
+      if (err?.response?.status === 409) {
+        window.alert(err.response?.data?.message || '409 Conflict');
+      } else {
+        console.error(err);
+        window.alert('Failed to finish inward.');
+      }
     } finally {
       setFinishing(false);
     }
+
   };
 
   return (
