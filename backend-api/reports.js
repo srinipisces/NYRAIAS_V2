@@ -401,35 +401,49 @@ router.post("/raw-material_inward_daywise", authenticate, async (req, res) => {
 
     if (start_date) {
       values.push(start_date);
-      conditions.push(`TO_DATE(material_arrivaltime, 'dd-mm-yyyy') >= $${values.length}`);
+      conditions.push(`material_arrivaltime::date >= TO_DATE($${values.length}, 'ddmmyy')`);
     }
 
     if (end_date) {
       values.push(end_date);
-      conditions.push(`TO_DATE(material_arrivaltime, 'dd-mm-yyyy') <= $${values.length}`);
+      conditions.push(`material_arrivaltime::date <= TO_DATE($${values.length}, 'ddmmyy')`);
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const query = `
-      SELECT to_char(material_arrivaltime, 'dd-mm-yyyy hh:mm:ss'),supplier_name, 
-      supplier_weight, supplier_value,supplier_dc_number,
-      inward_number,our_weight,userid,to_char(lab_result, 'dd-mm-yyyy hh:mm:ss'),
-      moisture,dust,ad_value,admit_load,lab_userid,remarks FROM ${table}
+      SELECT 
+        TO_CHAR(material_arrivaltime, 'dd-mm-yyyy hh24:mi:ss') AS arrival_time,
+        supplier_name, 
+        supplier_weight, 
+        supplier_value,
+        supplier_dc_number,
+        inward_number, 
+        our_weight, 
+        userid,
+        TO_CHAR(lab_result, 'dd-mm-yyyy hh24:mi:ss') AS lab_result,
+        moisture, 
+        dust, 
+        ad_value, 
+        admit_load, 
+        lab_userid, 
+        remarks 
+      FROM ${table}
       ${whereClause}
-      ORDER BY to_char(material_arrivaltime, 'dd-mm-yyyy hh:mm:ss') desc
+      ORDER BY material_arrivaltime DESC
     `;
 
     const result = await pool.query(query, values);
     const rows = result.rows;
     const columns = Object.keys(rows[0] || {});
-
     res.json({ columns, rows });
+
   } catch (err) {
     console.error('Error in raw-material_inward_daywise:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
 
 router.post("/kiln_output_bags_daywise", authenticate, async (req, res) => {
   try {
@@ -442,21 +456,26 @@ router.post("/kiln_output_bags_daywise", authenticate, async (req, res) => {
 
     if (start_date) {
       values.push(start_date);
-      conditions.push(`TO_DATE(kiln_output_dt, 'dd-mm-yyyy') >= $${values.length}`);
+      conditions.push(`TO_DATE(kiln_output_dt::text, 'ddmmyy') >= TO_DATE($${values.length}, 'ddmmyy')`);
     }
 
     if (end_date) {
       values.push(end_date);
-      conditions.push(`TO_DATE(kiln_output_dt, 'dd-mm-yyyy') <= $${values.length}`);
+      conditions.push(`TO_DATE(kiln_output_dt::text, 'ddmmyy') <= TO_DATE($${values.length}, 'ddmmyy')`);
     }
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const query = `
-      SELECT to_char(kiln_output_dt,'dd-mm-yyyy hh:mm:ss'),from_the_kiln as kiln,
-      bag_no,weight_with_stones,userid_kilnoutput as userid FROM ${table}
+      SELECT 
+        TO_CHAR(kiln_output_dt, 'dd-mm-yyyy hh24:mi:ss') AS datetime,
+        from_the_kiln AS kiln,
+        bag_no,
+        weight_with_stones,
+        userid_kilnoutput AS userid
+      FROM ${table}
       ${whereClause}
-      ORDER BY to_char(kiln_output_dt,'dd-mm-yyyy hh:mm:ss') desc
+      ORDER BY kiln_output_dt DESC
     `;
 
     const result = await pool.query(query, values);
@@ -465,10 +484,11 @@ router.post("/kiln_output_bags_daywise", authenticate, async (req, res) => {
 
     res.json({ columns, rows });
   } catch (err) {
-    console.error('Error in kiln_output_bags_daywise:', err);
+    console.error('Error in /kiln_output_bags_daywise:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });
+
 
 
 router.post("/kiln_output_vs_destoning", authenticate, async (req, res) => {
@@ -489,6 +509,51 @@ router.post("/kiln_output_vs_destoning", authenticate, async (req, res) => {
 
   } catch (err) {
     console.error('Error in /kiln_output_vs_destoning:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+router.post("/bags_waiting_for_destoning", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const table = `${accountid}_kiln_output`;
+
+    const query = `SELECT bag_no,to_char(kiln_output_dt,'dd-mm-yyyy hh:mm:ss') as kiln_output_date,exkiln_stock FROM ${table} where exkiln_stock = 'De-Stoning'`;
+    const { rows } = await pool.query(query);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /bags_waiting_for_destoning:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+
+router.post("/destoning_summary", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const table = `${accountid}_destoning`;
+
+    const query = `SELECT TO_CHAR(bag_generated_timestamp, 'dd-mm-yyyy') AS date,
+                      SUM(loaded_weight) AS loaded_weight,
+                      SUM(weight_out) AS weight_after_destoned,
+                      COUNT(*) AS number_of_bags
+                    FROM samcarbons_destoning
+                    WHERE bag_generated_timestamp::date BETWEEN TO_DATE($1, 'ddmmyy') 
+                    AND TO_DATE($2, 'ddmmyy')
+                    GROUP BY TO_CHAR(bag_generated_timestamp, 'dd-mm-yyyy');`;
+    const { rows } = await pool.query(query,[start_date,end_date]);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /destoning_summary:', err);
     res.status(500).json({ error: 'Database error' });
   }
 });

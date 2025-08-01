@@ -766,8 +766,8 @@ RETURNS TABLE (
   ds_bag_no TEXT,
   loaded_weight NUMERIC,
   weight_out NUMERIC,
-  has_other_bags BOOLEAN,
-  loaded_bags TEXT[]
+  loaded_bags TEXT[],
+  has_other_bags BOOLEAN
 ) AS $$
 DECLARE
   table_kiln TEXT := accountid || '_kiln_output';
@@ -781,6 +781,7 @@ BEGIN
       d.ds_bag_no,
       d.loaded_weight,
       d.weight_out,
+      d.loaded_bags,
       CASE
         WHEN d.loaded_bags IS NOT NULL THEN EXISTS (
           SELECT 1
@@ -789,8 +790,8 @@ BEGIN
             AND split_part(lb, '_', 2) <> %L
         )
         ELSE FALSE
-      END AS has_other_bags,
-      d.loaded_bags
+      END AS has_other_bags
+      
     FROM %I k
     LEFT JOIN %I d ON k.bag_no = ANY(d.loaded_bags)
     WHERE k.bag_no LIKE %L

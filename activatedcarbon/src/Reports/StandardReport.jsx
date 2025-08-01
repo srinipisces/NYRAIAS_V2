@@ -8,7 +8,7 @@ import DownloadIcon from '@mui/icons-material/Download';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
-export default function StandardReport({ endpoint, title, enableDateRange = false, needsSingleDate = false,startDate, endDate }) {
+export default function StandardReport({ endpoint, title, enableDateRange , needsSingleDate,startDate, endDate,singleDate }) {
   const [rows, setRows] = useState([]);
   const [columns, setColumns] = useState([]);
   const [searchText, setSearchText] = useState('');
@@ -16,7 +16,7 @@ export default function StandardReport({ endpoint, title, enableDateRange = fals
 
   useEffect(() => {
     fetchData();
-  }, [endpoint, startDate, endDate]);
+  }, [endpoint, startDate, endDate,singleDate]);
 
   const fetchData = async () => {
       try {
@@ -34,7 +34,7 @@ export default function StandardReport({ endpoint, title, enableDateRange = fals
             datecode: singleDate?.format('DDMMYY')  // this is what the backend expects
           };
         }
-
+        console.log('📦 Sending to backend:', body);
         const res = await axios.post(`${API_URL}/api/reports/${endpoint}`, body, { withCredentials: true });
         const { columns: cols, rows: data } = res.data;
         setColumns(cols.map(col => ({ field: col, headerName: col, flex: 1, minWidth: 150 })));

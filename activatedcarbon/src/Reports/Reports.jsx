@@ -55,6 +55,8 @@ export default function ReportsPage() {
         startDate={startDate}
         endDate={endDate}
         singleDate={singleDate}
+        enableDateRange={needsDateRange}
+        needsSingleDate={needsSingleDate}
       />
     );
   };
