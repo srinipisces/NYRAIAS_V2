@@ -7,7 +7,7 @@ import PageLayout from './Components/v2/PageLayout';
 import Dashboard from './pages/Dashboard';
 import OperationPage from './pages/Operations';
 import SettingsPage from './pages/settings';
-import ReportsPage from './pages/Reports';
+import ReportsPage from './Reports/Reports';
 import DataFlow from './pages/DataFlow';
 import Unauthorized from './pages/Unauthorized'; // Make sure this file exists
 

@@ -19,15 +19,15 @@ router.get('/instock', authenticate, async (req, res) => {
   try {
     // 1. Paginated query with UNION ALL
     const dataQuery = `
-      SELECT ds_bag_no as bag_no, weight_out AS weight, final_destination AS delivery_status
+      SELECT ds_bag_no as bag_no, 'exkiln' as grade,quality_ctc as ctc,weight_out AS weight, final_destination AS delivery_status
       FROM ${kilnTable}
-      WHERE final_destination = 'InStock'
+      WHERE final_destination = 'InStock' and quality_ctc > 0
 
       UNION ALL
 
-      SELECT bag_no, weight, delivery_status
+      SELECT bag_no, grade,ctc,weight, delivery_status
       FROM ${screenTable}
-      WHERE delivery_status = 'InStock'
+      WHERE delivery_status = 'InStock' and ctc > 0
 
       LIMIT $1 OFFSET $2
     `;
@@ -37,9 +37,9 @@ router.get('/instock', authenticate, async (req, res) => {
     // 2. Total count query
     const countQuery = `
       SELECT (
-        SELECT COUNT(*) FROM ${kilnTable} WHERE final_destination = 'InStock'
+        SELECT COUNT(*) FROM ${kilnTable} WHERE final_destination = 'InStock' and quality_ctc > 0
       ) + (
-        SELECT COUNT(*) FROM ${screenTable} WHERE delivery_status = 'InStock'
+        SELECT COUNT(*) FROM ${screenTable} WHERE delivery_status = 'InStock' and ctc > 0
       ) AS total
     `;
 
@@ -72,19 +72,19 @@ router.get('/filter', authenticate, async (req, res) => {
   if (prefix === 'S') {
     table = `${accountid}_screening_outward`;
     query = `
-      SELECT bag_no, weight, delivery_status
+      SELECT bag_no, grade,weight, delivery_status
       FROM ${table}
       WHERE bag_no ILIKE $1
-      AND delivery_status = 'InStock'
+      AND delivery_status = 'InStock' and ctc > 0
     `;
     values = [`%${search}%`];
   } else if (prefix === 'D') {
     table = `${accountid}_destoning`;
     query = `
-      SELECT ds_bag_no bag_no, weight_out AS weight, final_destination AS delivery_status
+      SELECT ds_bag_no bag_no, 'exkiln' as grade,weight_out AS weight, final_destination AS delivery_status
       FROM ${table}
       WHERE ds_bag_no ILIKE $1
-      AND final_destination = 'InStock'
+      AND final_destination = 'InStock' and quality_ctc > 0
     `;
     values = [`%${search}%`];
   } else {
@@ -101,7 +101,7 @@ router.get('/filter', authenticate, async (req, res) => {
 });
 
 
-router.put('/bulk-update', authenticate, checkAccess('Operations.Stock'),async (req, res) => {
+router.put('/bulk-update_old', authenticate, checkAccess('Operations.Stock'),async (req, res) => {
   const { userid,accountid } = req.user;
   const { searchText, status } = req.body;
 
@@ -188,6 +188,153 @@ router.put('/singleupdate/:bag_no', authenticate, checkAccess('Operations.Stock'
     res.status(500).json({ message: 'Update failed' });
   }
 });
+
+router.post('/filter_instock', authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const { filters = [], page = 0, limit = 50 } = req.body;
+
+  const tableConfigs = [
+    {
+      table: `${accountid}_screening_outward`,
+      aliasMap: {
+        bag_no: 'bag_no',
+        grade: 'grade',
+        ctc: 'ctc'
+      },
+      selectClause: `bag_no, grade, ctc, weight, delivery_status`,
+      staticFilter: `delivery_status = 'InStock' AND ctc > 0`
+    },
+    {
+      table: `${accountid}_destoning`,
+      aliasMap: {
+        bag_no: 'ds_bag_no',
+        grade: `'exkiln'`,
+        ctc: 'quality_ctc'
+      },
+      selectClause: `ds_bag_no AS bag_no, 'exkiln' AS grade, quality_ctc as ctc,weight_out AS weight, final_destination AS delivery_status`,
+      staticFilter: `final_destination = 'InStock' AND quality_ctc > 0`
+    }
+  ];
+
+  try {
+    const allResults = [];
+
+    for (const config of tableConfigs) {
+      const { table, aliasMap, selectClause, staticFilter } = config;
+
+      const conditions = [];
+      const values = [];
+
+      for (const filter of filters) {
+        const dbField = aliasMap[filter.field];
+        if (!dbField) continue;
+
+        const operator = filter.operator.toUpperCase();
+
+        if (operator === 'IN' && Array.isArray(filter.value)) {
+          const placeholders = filter.value.map((_, i) => `$${values.length + i + 1}`);
+          conditions.push(`${dbField} IN (${placeholders.join(', ')})`);
+          values.push(...filter.value);
+        } else {
+          values.push(filter.value);
+          conditions.push(`${dbField} ${operator} $${values.length}`);
+        }
+      }
+
+      const whereClause = conditions.length > 0
+        ? `${staticFilter} AND ${conditions.join(' AND ')}`
+        : staticFilter;
+
+      const query = `
+        SELECT ${selectClause}
+        FROM ${table}
+        WHERE ${whereClause}
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+      `;
+
+      const result = await pool.query(query, [...values, limit, page * limit]);
+      allResults.push(...result.rows);
+    }
+
+    res.json({ data: allResults, total: allResults.length });
+
+  } catch (err) {
+    console.error('Filter instock error:', err);
+    res.status(500).json({ message: 'Failed to filter stock' });
+  }
+});
+
+router.put('/bulk-update', authenticate, checkAccess('Operations.Stock'), async (req, res) => {
+  const { userid, accountid } = req.user;
+  const { filters = [], status } = req.body;
+
+  if (!status || !Array.isArray(filters)) {
+    return res.status(400).json({ message: 'Missing filters or status' });
+  }
+
+  const baseUpdates = [
+    {
+      table: `${accountid}_screening_outward`,
+      statusField: 'delivery_status',
+      userField: 'stock_change_userid',
+      timestampField: 'stock_change_dt',
+      extraCondition: `delivery_status = 'InStock' AND ctc > 0`,
+    },
+    {
+      table: `${accountid}_destoning`,
+      statusField: 'final_destination',
+      userField: 'stock_upd_user',
+      timestampField: 'stock_upd_dt',
+      extraCondition: `final_destination = 'InStock' AND quality_ctc > 0`,
+    }
+  ];
+
+  try {
+    let totalUpdated = 0;
+
+    for (const {
+      table, statusField, userField, timestampField, extraCondition
+    } of baseUpdates) {
+      const conditions = [];
+      const values = [];
+
+      for (const { field, operator, value } of filters) {
+        // 👇 Substitute bag_no with actual table-specific bag field
+        const actualField = (table.includes('destoning') && field === 'bag_no') ? 'ds_bag_no' : field;
+
+        if (operator === 'IN' && Array.isArray(value)) {
+          const placeholders = value.map((_, i) => `$${values.length + i + 1}`).join(', ');
+          conditions.push(`${actualField} IN (${placeholders})`);
+          values.push(...value);
+        } else {
+          values.push(value);
+          conditions.push(`${actualField} ${operator} $${values.length}`);
+        }
+      }
+
+      const whereClause = conditions.length > 0
+        ? `${extraCondition} AND ${conditions.join(' AND ')}`
+        : extraCondition;
+
+      const updateQuery = `
+        UPDATE ${table}
+        SET ${statusField} = $${values.length + 1},
+            ${userField} = $${values.length + 2},
+            ${timestampField} = CURRENT_TIMESTAMP
+        WHERE ${whereClause}
+      `;
+
+      const result = await pool.query(updateQuery, [...values, status, userid]);
+      totalUpdated += result.rowCount;
+    }
+
+    res.json({ message: 'Bulk update successful', updated: totalUpdated });
+  } catch (err) {
+    console.error('Bulk update error:', err);
+    res.status(500).json({ message: 'Bulk update failed' });
+  }
+});
+
 
 
 module.exports = router;

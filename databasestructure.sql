@@ -636,7 +636,8 @@ $$ LANGUAGE plpgsql;
 
 drop table samcarbons_destoning;
 CREATE TABLE samcarbons_destoning (
-  write_timestamp TIMESTAMP DEFAULT NOW(),
+  loaded_timestamp timestamp default CURRENT_TIMESTAMP,
+  bag_generated_timestamp TIMESTAMP,
   ds_bag_no TEXT unique,                  -- generated on submission
   loaded_weight NUMERIC,                       -- sum of loaded bags
   loaded_bags TEXT[],                          -- array of bag numbers
@@ -665,4 +666,139 @@ ALTER TABLE nyra_destoning ADD CONSTRAINT unique_ds_bag_no UNIQUE (ds_bag_no);
 
 
 
+CREATE OR REPLACE VIEW nyra_kiln_daily_summary AS
+SELECT
+  date_str,
 
+  MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_loaded_bags ELSE 0 END) AS kiln_a_loaded_bags,
+  MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_loaded_bags ELSE 0 END) AS kiln_b_loaded_bags,
+  MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_loaded_bags ELSE 0 END) AS kiln_c_loaded_bags,
+  
+  MAX(CASE WHEN kiln = 'Kiln A' THEN raw_material_out_weight ELSE 0 END) AS kiln_a_raw_out,
+  MAX(CASE WHEN kiln = 'Kiln B' THEN raw_material_out_weight ELSE 0 END) AS kiln_b_raw_out,
+  MAX(CASE WHEN kiln = 'Kiln C' THEN raw_material_out_weight ELSE 0 END) AS kiln_c_raw_out,
+
+  MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_loaded_weight ELSE 0 END) AS kiln_a_loaded_weight,
+  MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_loaded_weight ELSE 0 END) AS kiln_b_loaded_weight,
+  MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_loaded_weight ELSE 0 END) AS kiln_c_loaded_weight,
+
+  MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_output_bags ELSE 0 END) AS kiln_a_output_bags,
+  MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_output_bags ELSE 0 END) AS kiln_b_output_bags,
+  MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_output_bags ELSE 0 END) AS kiln_c_output_bags,
+
+  MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_output_weight ELSE 0 END) AS kiln_a_output_weight,
+  MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_output_weight ELSE 0 END) AS kiln_b_output_weight,
+  MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_output_weight ELSE 0 END) AS kiln_c_output_weight,
+
+    -- Summed totals across kilns
+  (
+    MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_loaded_bags ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_loaded_bags ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_loaded_bags ELSE 0 END)
+  ) AS total_loaded_bags,
+
+  (
+    MAX(CASE WHEN kiln = 'Kiln A' THEN raw_material_out_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln B' THEN raw_material_out_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln C' THEN raw_material_out_weight ELSE 0 END)
+  ) AS total_raw_material_out_weight,
+
+  (
+    MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_loaded_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_loaded_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_loaded_weight ELSE 0 END)
+  ) AS total_kiln_loaded_weight,
+
+  (
+    MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_output_bags ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_output_bags ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_output_bags ELSE 0 END)
+  ) AS total_kiln_output_bags,
+
+  (
+    MAX(CASE WHEN kiln = 'Kiln A' THEN kiln_output_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln B' THEN kiln_output_weight ELSE 0 END) +
+    MAX(CASE WHEN kiln = 'Kiln C' THEN kiln_output_weight ELSE 0 END)
+  ) AS total_kiln_output_weight
+  
+
+
+FROM (
+  SELECT 
+    COALESCE(a.date_str, b.date_str) AS date_str,
+    COALESCE(a.kiln, b.kiln) AS kiln,
+    COALESCE(a.num_bags, 0) AS kiln_loaded_bags,
+    COALESCE(a.raw_material_out_weight, 0) AS raw_material_out_weight,
+    COALESCE(a.kiln_loaded_weight, 0) AS kiln_loaded_weight,
+    COALESCE(b.num_bags, 0) AS kiln_output_bags,
+    COALESCE(b.total_weight, 0) AS kiln_output_weight
+  FROM (
+    SELECT 
+      TO_CHAR(kiln_load_time, 'dd-mm-yyyy') AS date_str,
+      kiln,
+      COUNT(*) AS num_bags,
+      SUM(weight) AS raw_material_out_weight,
+      SUM(kiln_loaded_weight) AS kiln_loaded_weight
+    FROM nyra_material_outward_bag
+    WHERE kiln_load_time IS NOT NULL
+    GROUP BY TO_CHAR(kiln_load_time, 'dd-mm-yyyy'), kiln
+  ) a
+  FULL OUTER JOIN (
+    SELECT 
+      TO_CHAR(kiln_output_dt, 'dd-mm-yyyy') AS date_str,
+      from_the_kiln AS kiln,
+      COUNT(*) AS num_bags,
+      SUM(weight_with_stones) AS total_weight
+    FROM nyra_kiln_output
+    GROUP BY TO_CHAR(kiln_output_dt, 'dd-mm-yyyy'), from_the_kiln
+  ) b
+  ON a.date_str = b.date_str AND a.kiln = b.kiln
+) pivoted
+GROUP BY date_str;
+
+
+--//////function for reporting
+
+CREATE OR REPLACE FUNCTION get_destoning_summary(accountid TEXT, datecode TEXT)
+RETURNS TABLE (
+  bag_no TEXT,
+  exkiln_stock TEXT,
+  ds_bag_no TEXT,
+  loaded_weight NUMERIC,
+  weight_out NUMERIC,
+  has_other_bags BOOLEAN,
+  loaded_bags TEXT[]
+) AS $$
+DECLARE
+  table_kiln TEXT := accountid || '_kiln_output';
+  table_destoning TEXT := accountid || '_destoning';
+BEGIN
+  RETURN QUERY EXECUTE format(
+    $f$
+    SELECT
+      k.bag_no,
+      k.exkiln_stock,
+      d.ds_bag_no,
+      d.loaded_weight,
+      d.weight_out,
+      CASE
+        WHEN d.loaded_bags IS NOT NULL THEN EXISTS (
+          SELECT 1
+          FROM unnest(d.loaded_bags) AS lb
+          WHERE lb <> k.bag_no
+            AND split_part(lb, '_', 2) <> %L
+        )
+        ELSE FALSE
+      END AS has_other_bags,
+      d.loaded_bags
+    FROM %I k
+    LEFT JOIN %I d ON k.bag_no = ANY(d.loaded_bags)
+    WHERE k.bag_no LIKE %L
+    $f$,
+    datecode,                            -- used for comparing full 6-digit date
+    table_kiln,
+    table_destoning,
+    '%' || datecode || '%'              -- used in WHERE clause to match bag_no
+  );
+END;
+$$ LANGUAGE plpgsql;

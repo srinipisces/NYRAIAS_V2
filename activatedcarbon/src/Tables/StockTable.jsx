@@ -43,7 +43,7 @@ export default function StockTable({
   const getStatusOptions = (bag_no) => {
     const prefix = bag_no.toLowerCase();
     if (prefix.startsWith('scr')) return ['InStock', 'Delivered', 'Screening'];
-    if (prefix.startsWith('koa')) return ['InStock', 'Delivered','Screening'];
+    if (prefix.startsWith('ds')) return ['InStock', 'Delivered','Screening'];
     return ['InStock']; // default/fallback
   };
 
@@ -52,7 +52,9 @@ export default function StockTable({
       <Table>
         <TableHead>
           <TableRow>
-            <TableCell>Bag</TableCell>
+            <TableCell>Bag_No</TableCell>
+            <TableCell>Grade</TableCell>
+            <TableCell>CTC</TableCell>
             <TableCell>Weight</TableCell>
             <TableCell>Stock Status</TableCell>
             <TableCell>Update</TableCell>
@@ -67,6 +69,8 @@ export default function StockTable({
             return (
               <TableRow key={row.bag_no}>
                 <TableCell>{row.bag_no}</TableCell>
+                <TableCell>{row.grade}</TableCell>
+                <TableCell>{row.ctc}</TableCell>
                 <TableCell>{row.weight}</TableCell>
                 <TableCell>
                   <Select

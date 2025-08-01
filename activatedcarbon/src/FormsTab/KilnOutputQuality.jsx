@@ -72,7 +72,7 @@ export default function KilnOutputQuality({ onSuccess }) {
       type: 'number',
       required: true,
       min :0,
-      max :100
+      max :700
     },
     {
       name: 'quality_ctc',

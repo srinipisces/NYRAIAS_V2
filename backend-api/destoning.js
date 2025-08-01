@@ -142,7 +142,7 @@ router.get("/status", authenticate, async (req, res) => {
       `SELECT loaded_bags, loaded_weight
        FROM ${destoningTable}
        WHERE ds_bag_no IS NULL
-       ORDER BY write_timestamp DESC
+       ORDER BY loaded_timestamp DESC
        LIMIT 1`
     );
 
@@ -188,9 +188,10 @@ router.get("/status", authenticate, async (req, res) => {
   }
 });
 
-router.post("/load", authenticate, checkAccess("Operations.De-Stoning"),async (req, res) => {
+router.post("/load", authenticate, checkAccess("Operations.De-Stoning"), async (req, res) => {
   const { accountid, userid } = req.user;
-  const table = `${accountid}_destoning`;
+  const destoningTable = `${accountid}_destoning`;
+  const kilnTable = `${accountid}_kiln_output`;
   const { loaded_bags, loaded_weight } = req.body;
 
   if (!Array.isArray(loaded_bags) || loaded_bags.length === 0) {
@@ -201,31 +202,51 @@ router.post("/load", authenticate, checkAccess("Operations.De-Stoning"),async (r
     return res.status(400).json({ error: "Invalid or missing loaded weight" });
   }
 
+  const client = await pool.connect();
   try {
-    // Ensure bags are not already loaded
-    const check = await pool.query(
-      `SELECT 1 FROM ${table}
+    await client.query("BEGIN");
+
+    // Ensure no active destoning with same bags
+    const check = await client.query(
+      `SELECT 1 FROM ${destoningTable}
        WHERE ds_bag_no IS NULL AND loaded_bags && $1`,
       [loaded_bags]
     );
 
     if (check.rowCount > 0) {
+      await client.query("ROLLBACK");
       return res.status(409).json({ error: "Some bags are already loaded in an active session" });
     }
 
-    await pool.query(
-      `INSERT INTO ${table} (loaded_bags, loaded_weight, userid)
+    // Insert into destoning table
+    await client.query(
+      `INSERT INTO ${destoningTable} (loaded_bags, loaded_weight, userid)
        VALUES ($1, $2, $3)`,
       [loaded_bags, loaded_weight, userid]
     );
 
+    // Update exkiln_stock in kiln output table
+    await client.query(
+      `UPDATE ${kilnTable}
+       SET exkiln_stock = 'DeStoningCompleted',
+       destoning_in_user = $2,
+       destoning_in_updt = current_timestamp
+       WHERE bag_no = ANY($1)`,
+      [loaded_bags,userid]
+    );
+
+    await client.query("COMMIT");
     return res.json({ success: true });
 
   } catch (err) {
+    await client.query("ROLLBACK");
     console.error("Load API error:", err);
     return res.status(500).json({ error: "Internal Server Error" });
+  } finally {
+    client.release();
   }
 });
+
 
 router.post("/complete", authenticate, async (req, res) => {
   const { accountid } = req.user;
@@ -240,16 +261,21 @@ router.post("/complete", authenticate, async (req, res) => {
   }
 
   const table = `${accountid}_destoning`;
-  const date = new Date();
-  const dayStr = date.toLocaleDateString("en-GB").split("/").reverse().join(""); // ddmmyyyy
+  const now = new Date();
+
+  // YYYYMMDD format
+  const dayStr = now.toISOString().slice(0, 10).replace(/-/g, ""); // '20250728'
   const prefix = `DSO_${dayStr}_`;
 
   try {
     await pool.query("BEGIN");
 
+    // Lock global counter for concurrency safety
+    await pool.query(`SELECT pg_advisory_xact_lock(hashtext('global_ds_bag_counter'))`);
+
     // Find pending destoning session that contains these bags
     const pendingResult = await pool.query(
-      `SELECT write_timestamp FROM ${table}
+      `SELECT bag_generated_timestamp FROM ${table}
        WHERE ds_bag_no IS NULL AND loaded_bags @> $1::text[]`,
       [loaded_bags]
     );
@@ -259,24 +285,25 @@ router.post("/complete", authenticate, async (req, res) => {
       return res.status(409).json({ error: "No matching pending session found" });
     }
 
-    // Get the max number for today's DSO bags
+    // Get max running number across all days (DSO_YYYYMMDD_###)
     const maxResult = await pool.query(
-      `SELECT MAX(CAST(SUBSTRING(ds_bag_no FROM $2) AS INTEGER)) AS max_no
+      `SELECT MAX(CAST(SUBSTRING(ds_bag_no FROM 'DSO_\\d{8}_(\\d+)$') AS INTEGER)) AS max_no
        FROM ${table}
-       WHERE ds_bag_no LIKE $1`,
-      [`${prefix}%`, `DSO_${dayStr}_(\\d{3})`]
+       WHERE ds_bag_no ~ 'DSO_\\d{8}_\\d+$'`
     );
 
-    const nextNo = (maxResult.rows[0].max_no || 0) + 1;
+    let nextNo = (maxResult.rows[0].max_no || 0);
+    nextNo = (nextNo >= 999) ? 1 : nextNo + 1;
+
     const newBagNo = `${prefix}${String(nextNo).padStart(3, '0')}`;
 
-    // Update the record
+    // Update the pending row with the new bag number
     await pool.query(
       `UPDATE ${table}
        SET ds_bag_no = $1,
            weight_out = $2,
            final_destination = '',
-           write_timestamp = CURRENT_TIMESTAMP
+           bag_generated_timestamp = CURRENT_TIMESTAMP
        WHERE ds_bag_no IS NULL AND loaded_bags @> $3::text[]`,
       [newBagNo, weight_out, loaded_bags]
     );
@@ -290,7 +317,6 @@ router.post("/complete", authenticate, async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
-
 
 router.get("/bag_quality", authenticate,async(req,res) => {
   const {accountid} = req.user;
@@ -353,4 +379,47 @@ router.post("/destoningquality", authenticate,checkAccess('Operations.De-Stoning
   }
 })
 
+router.get("/destoningtable",authenticate, async(req,res) => {
+    const {accountid} = req.user;
+    const table = `${accountid}_destoning`
+    try {
+      const result = await pool.query(`SELECT *
+      FROM ${table} 
+      where ds_bag_no is not null and final_destination != 'Delivered'
+      ORDER BY bag_generated_timestamp DESC ;
+      `);
+      const rows = result.rows;
+      const columns = result.fields.map((field) => ({
+        field: field.name,
+        headerName: field.name.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+        flex: 1,
+      }));
+      res.json({ columns, rows });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+router.post('/update-cell', authenticate, checkAccess('Operations.De-Stoning Quality'),async (req, res) => {
+  const { primaryKeyField, primaryKeyValue, field, value } = req.body;
+  const accountId = req.user.accountid; // or extract from token/session
+
+  try {
+    const tableName = `${accountId}_destoning`;
+
+    const query = `
+      UPDATE ${tableName}
+      SET ${field} = $1
+      WHERE ${primaryKeyField} = $2
+    `;
+    await pool.query(query, [value, primaryKeyValue]);
+
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Update failed', err);
+    res.status(500).json({ error: 'Update failed' });
+  }
+});
 module.exports = router;

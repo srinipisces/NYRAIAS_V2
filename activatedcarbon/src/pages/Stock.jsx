@@ -1,8 +1,9 @@
+// Stock.jsx
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
-import SearchBarWithStatus from './SearchBarWithStatus';
+import ExpressionSearchBar from './ExpressionSearchBar';
 import StockTable from '../Tables/StockTable';
-import { Snackbar, Alert } from '../../node_modules/@mui/material';
+import { Snackbar, Alert } from '@mui/material';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -11,23 +12,18 @@ export default function Stock() {
   const [totalRows, setTotalRows] = useState(0);
   const [page, setPage] = useState(0);
   const [rowsPerPage] = useState(50);
-  const [searchParams, setSearchParams] = useState({ searchText: '', status: '' });
+  const [filters, setFilters] = useState([]);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  const fetchData = async (pageOverride = page) => {
+  const fetchData = async (pageOverride = page, customFilters = filters) => {
     try {
       setLoading(true);
-      const { searchText, status } = searchParams;
-      const res = await axios.get(`${API_URL}/api/stock/instock`, {
-        params: {
-          page: pageOverride,
-          limit: rowsPerPage,
-          search: searchText,
-          status
-        },
-        withCredentials: true
-      });
+      const res = await axios.post(
+        `${API_URL}/api/stock/filter_instock`,
+        { filters: customFilters, page: pageOverride, limit: rowsPerPage },
+        { withCredentials: true }
+      );
       setData(res.data.data);
       setTotalRows(res.data.total);
       setPage(pageOverride);
@@ -40,58 +36,37 @@ export default function Stock() {
   };
 
   useEffect(() => {
-    fetchData(0); // initial load
+    fetchData(0);
   }, []);
 
-  const handleSearch = async (searchText, status) => {
-    setSearchParams({ searchText, status });
+  const handleSearch = async (newFilters) => {
+    setFilters(newFilters);
+    fetchData(0, newFilters);
+  };
+
+  const handleBulkUpdate = async (filterSet, newStatus) => {
+    setLoading(true);
     try {
-      setLoading(true);
-      
-      if (!searchText) {
-        const { searchText, status } = searchParams;
-        const res = await axios.get(`${API_URL}/api/stock/instock`, {
-          params: {
-            page: 0,
-            limit: rowsPerPage,
-            search: searchText,
-            status
-          },
-          withCredentials: true
-        });
-        setData(res.data.data);
-        setTotalRows(res.data.total);
-        setPage(0);
-      } else {
-        const res = await axios.get(`${API_URL}/api/stock/filter`, {
-          params: { search: searchText, status },
-          withCredentials: true
-        });
-        setData(res.data.data);
-        setTotalRows(res.data.total);
-        setPage(0);
-      }
+      await axios.put(
+        `${API_URL}/api/stock/bulk-update`,
+        { filters: filterSet, status: newStatus },
+        { withCredentials: true }
+      );
+      fetchData(0, filterSet);
     } catch (err) {
-      console.error('Search error:', err);
-      setError('Failed to filter stock.');
+      setError('Bulk update failed.');
     } finally {
       setLoading(false);
     }
   };
 
-
-  const handleBulkUpdate = async (searchText, status) => {
-    try {
-      await axios.put(`${API_URL}/api/stock/bulk-update`, { searchText, status }, { withCredentials: true });
-      fetchData(0);
-    } catch (err) {
-      setError('Bulk update failed.');
-    }
-  };
-
   const handleIndividualUpdate = async (bag, newStatus) => {
     try {
-      await axios.put(`${API_URL}/api/stock/singleupdate/${bag}`, { status: newStatus }, { withCredentials: true });
+      await axios.put(
+        `${API_URL}/api/stock/singleupdate/${bag}`,
+        { status: newStatus },
+        { withCredentials: true }
+      );
       fetchData(page);
     } catch (err) {
       setError(`Update failed for bag ${bag}.`);
@@ -100,8 +75,12 @@ export default function Stock() {
 
   return (
     <>
-      <h2>Material in InStock </h2>
-      <SearchBarWithStatus onSearch={handleSearch} onBulkUpdate={handleBulkUpdate} />
+      <h2>Material in InStock</h2>
+      <ExpressionSearchBar
+        onSearch={handleSearch}
+        onBulkUpdate={handleBulkUpdate}
+        loading={loading}
+      />
       <StockTable
         data={data}
         page={page}

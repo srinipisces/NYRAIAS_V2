@@ -1,17 +1,21 @@
 import React ,{useState} from 'react';
 import { Typography ,Box} from '../../node_modules/@mui/material';
 import DeStoningQualityForm from '../FormsTab/DeStoningQualityForm';
-import KilnOutputTable from '../Tables/KilnOutputTable';
+import DestoningOutTable from '../Tables/DestoningOutTable';
+import SearchBar from './SearchBar';
 export default function DeStoningQuality() {
   const [refreshKey, setRefreshKey] = useState(0);
-
+  const [searchText, setSearchText] = useState('');
   const handleRefreshTable = () => {
     setRefreshKey(prev => prev + 1); // Force RawMaterialIncoming to re-render
   };
+  
+  const handleSearch = (text) => setSearchText(text);
   return (
     <Box><h2>Kiln Output</h2>
     <DeStoningQualityForm onSuccess={handleRefreshTable}/>
-    <KilnOutputTable key={refreshKey} />
+    <SearchBar onSearch={handleSearch} />
+    <DestoningOutTable key={refreshKey} searchText={searchText} />
     </Box>
   );
 }

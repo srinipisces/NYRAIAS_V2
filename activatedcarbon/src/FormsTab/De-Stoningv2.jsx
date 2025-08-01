@@ -39,6 +39,7 @@ export default function DeStoningLoader() {
       }
     } catch (err) {
       console.error("Failed to check De-Stoner status", err);
+      alert("Error while loading");
     }
   };
 
@@ -93,6 +94,7 @@ export default function DeStoningLoader() {
       console.error("Load failed:", err);
       alert(err.response?.data?.error || "Error while loading. Please try again.");
       setLoading(false);
+
     } finally {
       if (!isBusy) setLoading(false);
     }

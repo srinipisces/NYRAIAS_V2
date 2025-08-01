@@ -334,8 +334,6 @@ router.post("/rms_performance", authenticate, async (req, res) => {
       ORDER BY inward_number, day DESC;
     `;
 
-
-
     const dataResult = await pool.query(dataQuery);
   
 
@@ -348,4 +346,151 @@ router.post("/rms_performance", authenticate, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+router.post("/kiln_yield", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const kiln_summary_view = `${accountid}_kiln_daily_summary`;
+
+    const conditions = [];
+    const values = [];
+
+    if (start_date) {
+      values.push(start_date);
+      conditions.push(`TO_DATE(date_str, 'dd-mm-yyyy') >= $${values.length}`);
+    }
+
+    if (end_date) {
+      values.push(end_date);
+      conditions.push(`TO_DATE(date_str, 'dd-mm-yyyy') <= $${values.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const query = `
+      SELECT *,
+        ROUND((kiln_output_weight / NULLIF(raw_material_out_weight, 0)) * 100, 0) AS actual_yield,
+        ROUND((kiln_output_weight / NULLIF(kiln_loaded_weight, 0)) * 100, 0) AS kiln_yield,
+        (kiln_loaded_weight - raw_material_out_weight) AS kiln_input_loss
+      FROM ${kiln_summary_view}
+      ${whereClause}
+      ORDER BY TO_DATE(date_str, 'dd-mm-yyyy') ASC
+    `;
+
+    const result = await pool.query(query, values);
+    const rows = result.rows;
+    const columns = Object.keys(rows[0] || {});
+
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error('Error in /kiln_yield:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+router.post("/raw-material_inward_daywise", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const table = `${accountid}_rawmaterial_rcvd`;
+
+    const conditions = [];
+    const values = [];
+
+    if (start_date) {
+      values.push(start_date);
+      conditions.push(`TO_DATE(material_arrivaltime, 'dd-mm-yyyy') >= $${values.length}`);
+    }
+
+    if (end_date) {
+      values.push(end_date);
+      conditions.push(`TO_DATE(material_arrivaltime, 'dd-mm-yyyy') <= $${values.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const query = `
+      SELECT to_char(material_arrivaltime, 'dd-mm-yyyy hh:mm:ss'),supplier_name, 
+      supplier_weight, supplier_value,supplier_dc_number,
+      inward_number,our_weight,userid,to_char(lab_result, 'dd-mm-yyyy hh:mm:ss'),
+      moisture,dust,ad_value,admit_load,lab_userid,remarks FROM ${table}
+      ${whereClause}
+      ORDER BY to_char(material_arrivaltime, 'dd-mm-yyyy hh:mm:ss') desc
+    `;
+
+    const result = await pool.query(query, values);
+    const rows = result.rows;
+    const columns = Object.keys(rows[0] || {});
+
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error('Error in raw-material_inward_daywise:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+router.post("/kiln_output_bags_daywise", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const table = `${accountid}_kiln_output`;
+
+    const conditions = [];
+    const values = [];
+
+    if (start_date) {
+      values.push(start_date);
+      conditions.push(`TO_DATE(kiln_output_dt, 'dd-mm-yyyy') >= $${values.length}`);
+    }
+
+    if (end_date) {
+      values.push(end_date);
+      conditions.push(`TO_DATE(kiln_output_dt, 'dd-mm-yyyy') <= $${values.length}`);
+    }
+
+    const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    const query = `
+      SELECT to_char(kiln_output_dt,'dd-mm-yyyy hh:mm:ss'),from_the_kiln as kiln,
+      bag_no,weight_with_stones,userid_kilnoutput as userid FROM ${table}
+      ${whereClause}
+      ORDER BY to_char(kiln_output_dt,'dd-mm-yyyy hh:mm:ss') desc
+    `;
+
+    const result = await pool.query(query, values);
+    const rows = result.rows;
+    const columns = Object.keys(rows[0] || {});
+
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error('Error in kiln_output_bags_daywise:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+router.post("/kiln_output_vs_destoning", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { datecode } = req.body;  // expected in 'ddmmyy' format
+
+    if (!datecode || !/^\d{6}$/.test(datecode)) {
+      console.log("Bad date format :",datecode);
+      return res.status(400).json({ error: "Invalid or missing datecode (expected DDMMYY)"});
+    }
+
+    const query = `SELECT * FROM get_destoning_summary($1, $2)`;
+    const { rows } = await pool.query(query, [accountid, datecode]);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /kiln_output_vs_destoning:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 module.exports = router;
