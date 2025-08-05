@@ -304,42 +304,14 @@ router.post("/rms_performance", authenticate, async (req, res) => {
     const { accountid } = req.user;
     const { page = 1, limit = 10 } = req.body;
     const offset = (page - 1) * limit;
-
-    const material_hist = `${accountid}_rawmaterial_inward_history`;
-    const rawMaterialTable = `${accountid}_rawmaterial_rcvd`;
-    const materialInwardTable = `${accountid}_material_inward_bag`;
-
+    const rep_view = `${accountid}_rms_summary_view`;
     // Main paginated query
     const dataQuery = `
-      SELECT DISTINCT ON (inward_number)
-      day,
-      inward_number,
-      supplier_name,
-      supplier_weight,
-      weight_at_security,
-      raw_material_inward_weight,
-      raw_material_inward_loss_or_gain,
-      raw_material_inward_status,
-      raw_material_outward_status,
-      Gcharcoal_Weight_after_crusher,
-      Physical_Loss_in_crusher,
-      Total_weight_from_crusher,
-      kiln_loaded_weight,
-      raw_material_inward_weight as RMS_inward_weight,
-      (raw_material_inward_weight - weight_at_security) as RMS_inward_loss,
-      Gcharcoal_Weight_after_crusher as RMS_outward_weight,
-      (Gcharcoal_Weight_after_crusher-raw_material_inward_weight) as RMS_Processing_Loss,
-      (raw_material_inward_weight - weight_at_security) + (Gcharcoal_Weight_after_crusher-raw_material_inward_weight) as RMS_Total_Loss
-      FROM ${material_hist}
-      ORDER BY inward_number, day DESC;
+      select * from ${rep_view}
     `;
-
     const dataResult = await pool.query(dataQuery);
-  
-
     const rows = dataResult.rows;
     const columns = Object.keys(rows[0] || {});
-
     res.json({ columns, rows});
   } catch (err) {
     console.error('Error in /rms_performance:', err);
@@ -370,8 +342,8 @@ router.post("/kiln_yield", authenticate, async (req, res) => {
 
     const query = `
       SELECT *,
-        ROUND((kiln_output_weight / NULLIF(raw_material_out_weight, 0)) * 100, 0) AS actual_yield,
-        ROUND((kiln_output_weight / NULLIF(kiln_loaded_weight, 0)) * 100, 0) AS kiln_yield,
+        ROUND((kiln_output_weight / NULLIF(raw_material_out_weight, 0)) * 100, 2) AS actual_yield,
+        ROUND((kiln_output_weight / NULLIF(kiln_loaded_weight, 0)) * 100, 2) AS kiln_yield,
         (kiln_loaded_weight - raw_material_out_weight) AS kiln_input_loss
       FROM ${kiln_summary_view}
       ${whereClause}
@@ -456,19 +428,20 @@ router.post("/kiln_output_bags_daywise", authenticate, async (req, res) => {
 
     if (start_date) {
       values.push(start_date);
-      conditions.push(`TO_DATE(kiln_output_dt::text, 'ddmmyy') >= TO_DATE($${values.length}, 'ddmmyy')`);
+      conditions.push(`kiln_output_dt::date >= TO_DATE($${values.length}, 'ddmmyy')`);
     }
 
     if (end_date) {
       values.push(end_date);
-      conditions.push(`TO_DATE(kiln_output_dt::text, 'ddmmyy') <= TO_DATE($${values.length}, 'ddmmyy')`);
+      conditions.push(`kiln_output_dt::date <= TO_DATE($${values.length}, 'ddmmyy')`);
     }
+
 
     const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
 
     const query = `
       SELECT 
-        TO_CHAR(kiln_output_dt, 'dd-mm-yyyy hh24:mi:ss') AS datetime,
+        TO_CHAR(kiln_output_dt, 'dd-mm-yyyy hh24:mm:ss') AS datetime,
         from_the_kiln AS kiln,
         bag_no,
         weight_with_stones,
@@ -543,7 +516,7 @@ router.post("/destoning_summary", authenticate, async (req, res) => {
                       SUM(loaded_weight) AS loaded_weight,
                       SUM(weight_out) AS weight_after_destoned,
                       COUNT(*) AS number_of_bags
-                    FROM samcarbons_destoning
+                    FROM ${table}
                     WHERE bag_generated_timestamp::date BETWEEN TO_DATE($1, 'ddmmyy') 
                     AND TO_DATE($2, 'ddmmyy')
                     GROUP BY TO_CHAR(bag_generated_timestamp, 'dd-mm-yyyy');`;
@@ -557,5 +530,28 @@ router.post("/destoning_summary", authenticate, async (req, res) => {
     res.status(500).json({ error: 'Database error' });
   }
 });
+
+router.post("/kiln_load", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const table = `${accountid}_material_outward_bag`;
+
+    const query = `SELECT TO_CHAR(kiln_load_time, 'dd-mm-yyyy hh24:mm:ss') AS kiln_load_time,
+                      bag_no,kiln_loaded_weight,kiln
+                    FROM ${table}
+                    WHERE kiln_load_time::date BETWEEN TO_DATE($1, 'ddmmyy') 
+                    AND TO_DATE($2, 'ddmmyy')`;
+    const { rows } = await pool.query(query,[start_date,end_date]);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /destoning_summary:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
 
 module.exports = router;

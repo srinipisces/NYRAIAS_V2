@@ -156,9 +156,6 @@ const Dashboard = () => {
                 data: charcoalData?.Charcoal_chartData,
                 keys: charcoalData?.Charcoal_chart_keys,
               }],
-              [LabTest, 'Lab Test Results For Inward Stock', {
-                data: charcoalData?.labTestData,
-              }],
             ]
           : [],
         loadingCharcoal,
@@ -185,7 +182,10 @@ const Dashboard = () => {
         `Exkiln In-Stock: ${exkilnData?.exkiln_stock ?? '...'} kg`,
         exkilnData
           ? [
-              [ExkilnStock, 'Exkiln in-stock', {
+              [ExkilnStock, 'Exkiln stock before de-stoning', {
+                data: exkilnData?.exkiln_chartData,
+              }],
+              [ExkilnStock, 'Exkiln stock after de-stoning', {
                 data: exkilnData?.exkiln_chartData,
               }],
               

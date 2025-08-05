@@ -223,7 +223,7 @@ router.get("/kilnFeedTable", authenticate,async(req,res) => {
   FROM 
     ${table} b
   WHERE 
-    b.kiln_quality_updt is null and b.grade in ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')
+    b.kiln_feed_status is null and b.grade in ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')
     `
     
     const result = await pool.query(que);

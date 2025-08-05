@@ -466,7 +466,7 @@ create table testbed_screening_outward (
   reload_userid text
 );
 
-CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_screening_outward()
+/* CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_screening_outward()
 RETURNS TRIGGER
 LANGUAGE plpgsql
 AS $$
@@ -490,7 +490,7 @@ BEGIN
   )
   INTO last_counter
   FROM testbed_screening_outward
-  WHERE bag_no ~ ('^Screen_' || date_str || '-[0-9]+$');
+  WHERE bag_no ~ ('^Screen_%');
 
   IF last_counter IS NULL THEN
     last_counter := 0;
@@ -503,8 +503,57 @@ BEGIN
 
   RETURN NEW;
 END;
+$$; */
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_testbed_screening_outward()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  date_str TEXT;
+  prefix TEXT;
+  last_counter INTEGER;
+BEGIN
+  IF NEW.bag_no IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- Format the date as DDMMYY
+  date_str := TO_CHAR(NEW.screening_out_dt, 'DDMMYY');
+
+  -- Determine prefix based on grade
+  IF TRIM(NEW.grade) = '6x12' THEN
+    prefix := 'Screen_R_' || date_str || '_';
+  ELSIF TRIM(NEW.grade) = '8x30' THEN
+    prefix := 'Screen_S_' || date_str || '_';
+  ELSIF TRIM(NEW.grade) = '-30' THEN
+    prefix := 'Screen_V_' || date_str || '_';
+  ELSE
+    prefix := 'Screen_' || date_str || '_';
+  END IF;
+
+  -- Lock globally to prevent race conditions
+  PERFORM pg_advisory_xact_lock(hashtext('screening_outward_counter'));
+
+  -- Find last counter used (globally across all formats)
+  SELECT MAX(CAST(SUBSTRING(bag_no FROM '[0-9]{3}$') AS INTEGER))
+  INTO last_counter
+  FROM testbed_screening_outward
+  WHERE bag_no ~ ('^Screen(_[RSV])?_[0-9]{6}_[0-9]{3}$');
+
+  IF last_counter IS NULL OR last_counter >= 999 THEN
+    last_counter := 0;
+  END IF;
+
+  last_counter := last_counter + 1;
+
+  -- Construct final bag number
+  NEW.bag_no := prefix || LPAD(last_counter::TEXT, 3, '0');
+
+  RETURN NEW;
+END;
 $$;
 
+drop trigger trg_generate_bag_no_testbed_screening_outward ON testbed_screening_outward;
 CREATE TRIGGER trg_generate_bag_no_testbed_screening_outward
 BEFORE INSERT ON testbed_screening_outward
 FOR EACH ROW
@@ -575,6 +624,9 @@ create table nyra_rawmaterial_inward_history (
             raw_material_outward_no_bags numeric,
             Gcharcoal_Weight_after_crusher numeric,
             Physical_Loss_in_crusher numeric,
+            Stones numeric,
+            Unburnt numeric,
+            minus20 numeric,
             Total_weight_from_crusher numeric,
             kiln_loaded_weight numeric,
             kiln_load_no_bags numeric,
@@ -803,3 +855,93 @@ BEGIN
   );
 END;
 $$ LANGUAGE plpgsql;
+
+
+drop view nyra_rms_summary_view;
+CREATE OR REPLACE VIEW nyra_rms_summary_view AS
+WITH inward_agg AS (
+  SELECT
+    inward_number,
+    SUM(weight) AS inward_weight
+  FROM nyra_material_inward_bag
+  GROUP BY inward_number
+),
+outward_agg AS (
+  SELECT
+    inward_number,
+    SUM(CASE WHEN grade ILIKE 'Grade%' THEN weight ELSE 0 END) AS gcharcoal_weight,
+    SUM(CASE WHEN LOWER(grade) LIKE '%stone%' THEN weight ELSE 0 END) AS stones_weight,
+    SUM(CASE WHEN LOWER(grade) LIKE '%unburnt%' THEN weight ELSE 0 END) AS unburnt_weight,
+    SUM(CASE WHEN grade ILIKE '-20%' THEN weight ELSE 0 END) AS minus20_weight
+  FROM nyra_material_outward_bag
+  GROUP BY inward_number
+)
+SELECT
+  r.material_arrivaltime,
+  r.supplier_name,
+  r.supplier_weight,
+  r.inward_number,
+  r.our_weight AS weight_at_security,
+
+  COALESCE(i.inward_weight, 0) AS inward_weight,
+
+  COALESCE(o.gcharcoal_weight, 0) AS gcharcoal_weight,
+  COALESCE(o.stones_weight, 0) AS stones_weight,
+  COALESCE(o.unburnt_weight, 0) AS unburnt_weight,
+  COALESCE(o.minus20_weight, 0) AS minus20_weight,
+
+  -- Computed fields
+  (COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) AS physical_loss,
+  (COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0)) AS total_weight_out,
+  (COALESCE(i.inward_weight, 0) - r.our_weight) AS "inward-security_weight",
+  (COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) AS "total_out-inward_weight",
+   (COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) +
+   (COALESCE(i.inward_weight, 0) - r.our_weight) as rms_inward_loss,
+  (COALESCE(o.gcharcoal_weight, 0) - COALESCE(i.inward_weight, 0)) AS rms_processing_loss,
+  ((COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) +
+   (COALESCE(i.inward_weight, 0) - r.our_weight) + 
+   (COALESCE(o.gcharcoal_weight, 0) - COALESCE(i.inward_weight, 0))) AS rms_total_loss,
+   round((((COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) +
+   (COALESCE(i.inward_weight, 0) - r.our_weight) + 
+   (COALESCE(o.gcharcoal_weight, 0) - COALESCE(i.inward_weight, 0))) / r.our_weight) * 100,2) AS "rms_total_loss/our_weight",
+   (COALESCE(i.inward_weight, 0) - r.supplier_weight) AS "inward-supplier_weight",
+   ((COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) +
+   (COALESCE(i.inward_weight, 0) - r.supplier_weight) + 
+   (COALESCE(o.gcharcoal_weight, 0) - COALESCE(i.inward_weight, 0))) AS rms_total_loss_with_supplier_weight,
+   round((((COALESCE(o.gcharcoal_weight, 0) + 
+   COALESCE(o.stones_weight, 0) + 
+   COALESCE(o.unburnt_weight, 0) + 
+   COALESCE(o.minus20_weight, 0) -
+   COALESCE(i.inward_weight, 0)) +
+   (COALESCE(i.inward_weight, 0) - r.supplier_weight) + 
+   (COALESCE(o.gcharcoal_weight, 0) - COALESCE(i.inward_weight, 0))) / r.supplier_weight) * 100,2) AS "rms_total_loss_with_supplier_wieght/our_weight"
+
+
+
+FROM nyra_rawmaterial_rcvd r
+LEFT JOIN inward_agg i ON r.inward_number = i.inward_number
+LEFT JOIN outward_agg o ON r.inward_number = o.inward_number;
+

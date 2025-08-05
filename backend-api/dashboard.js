@@ -72,13 +72,13 @@ router.get("/gcharcoal", authenticate,async(req,res) => {
             -- Percentages relative to total weight
             ROUND(SUM(CASE WHEN a.grade = 'Stones' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_stone,
             ROUND(SUM(CASE WHEN a.grade = 'Unburnt' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_unburnt,
-            ROUND(SUM(CASE WHEN a.grade like '-20%' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_minus20,
-            ROUND(SUM(CASE WHEN a.grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B') THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_gcharcoal
+            ROUND(SUM(CASE WHEN a.grade like '-20%' THEN a.weight ELSE 0 END) * 100.0 / NULLIF(SUM(a.weight), 0), 2) AS percent_minus20
 
             FROM ${accountid}_material_outward_bag a
             LEFT JOIN ${accountid}_rawmaterial_rcvd b
             ON a.inward_number = b.inward_number
             WHERE a.kiln_feed_status IS NULL
+            and b.kiln_feed_status is null
             GROUP BY a.inward_number, b.supplier_name
             ORDER BY a.inward_number;`
 

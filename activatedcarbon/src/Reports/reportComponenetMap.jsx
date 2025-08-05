@@ -39,6 +39,10 @@ export const reportComponentMap = {
     component: (props) => <StandardReport endpoint="bags_waiting_for_destoning" title="Bags Waiting For DeStoning" {...props} />,
     needsDateRange: false
   },
+  'Kiln Load': {
+    component: (props) => <StandardReport endpoint="kiln_load" title="Kiln Load" {...props} />,
+    needsDateRange: true
+  },
   'Kiln Output vs DeStoning': {
     component: (props) => <StandardReport endpoint="kiln_output_vs_destoning" title="Kiln Output vs DeStoning" {...props} />,
     needsSingleDate: true

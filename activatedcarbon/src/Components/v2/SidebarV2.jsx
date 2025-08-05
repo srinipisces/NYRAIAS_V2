@@ -5,6 +5,7 @@ import {
   ListItemIcon,
   ListItemText,
   Divider,
+  Typography
 } from '../../../node_modules/@mui/material';
 import DashboardIcon from '@mui/icons-material/Dashboard';
 import { NavLink } from 'react-router-dom';
@@ -12,6 +13,7 @@ import { useState } from 'react';
 import axios from 'axios';
 import { useAuth } from '../../AuthContext';
 import nyralogo from './NYRA_Logo.png';
+import indopure from './indopure.png'
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -73,7 +75,9 @@ export default function Sidebar({ onNavigate }) {
       <Divider sx={{ mt: 2 }} />
 
       <Box sx={{ p: 2, textAlign: 'center' }}>
-        <img src={nyralogo} alt="Logo" width={100} />
+        <Typography>Powered by:</Typography>
+        <img src={indopure} alt="Logo" width={150} />
+        
       </Box>
     </Box>
   );

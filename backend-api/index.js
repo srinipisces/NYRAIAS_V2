@@ -325,7 +325,7 @@ router.post(
         userid,
       ];
 
-      console.log(text, values);
+     
 
       await pool.query(text, values);
 
@@ -403,7 +403,7 @@ router.post("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Pe
       req.body.boiler_outlet_temperature,req.body.feed_pump,
       req.body.blower_open,req.body.fan_damper_open,
       req.body.id_fan_rpm,req.body.remarks,userid];
-    console.log(values,que)
+    
     const result = await pool.query(que,values);
     
     res.json({ operation: 'success' });
@@ -536,7 +536,7 @@ function getOrdinal(n) {
 
 function assignDeliveryOrder(data) {
       // Group records by supplier and timestamp
-      console.log("here..");
+      
       const grouped = {};
   
       data.forEach(item => {
