@@ -945,3 +945,51 @@ FROM nyra_rawmaterial_rcvd r
 LEFT JOIN inward_agg i ON r.inward_number = i.inward_number
 LEFT JOIN outward_agg o ON r.inward_number = o.inward_number;
 
+
+
+
+drop view samcarbons_dashboard_stages_summary_view;
+CREATE OR REPLACE VIEW samcarbons_dashboard_stages_summary_view AS
+SELECT
+  -- 1. Raw Material Stock
+  COALESCE(SUM(a.our_weight - COALESCE(b.total_inward_weight, 0)), 0) AS charcoal_stock,
+
+  
+  -- 3. RMS Outward Stock (outwarded, not yet loaded to kiln, and only valid grades)
+  COALESCE((
+    SELECT SUM(weight)
+    FROM samcarbons_material_outward_bag
+    WHERE kiln_feed_status IS NULL
+      AND grade LIKE 'Grade%'
+  ), 0) AS gcharcoal_stock,
+
+  -- 4: kiln-out
+  COALESCE((
+  SELECT SUM(weight_with_stones)
+  FROM samcarbons_kiln_output
+  WHERE exkiln_stock = 'De-Stoning'
+), 0) AS exkiln_with_stone_stock,
+
+--- 5. De-Stoning
+  COALESCE((
+  SELECT SUM(weight_out)
+  FROM samcarbons_destoning
+  WHERE final_destination IN ('InStock', 'Screening')
+), 0) AS exkiln_without_stone_stock,
+
+--- grade_stock  
+  COALESCE((
+  SELECT SUM(weight)
+  FROM samcarbons_screening_outward
+  WHERE delivery_status = 'InStock'
+), 0) AS final_grade_stock
+
+
+FROM samcarbons_rawmaterial_rcvd a
+LEFT JOIN (
+  SELECT inward_number, SUM(weight) AS total_inward_weight
+  FROM samcarbons_material_inward_bag
+  GROUP BY inward_number
+) b ON a.inward_number = b.inward_number
+WHERE a.material_inward_status IS NULL;
+

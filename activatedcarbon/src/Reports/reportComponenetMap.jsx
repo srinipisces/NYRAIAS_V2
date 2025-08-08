@@ -55,6 +55,14 @@ export const reportComponentMap = {
     component: (props) => <StandardReport endpoint="raw-material_inward_daywise" title="Raw-Material Inward at Gate" {...props} />,
     needsDateRange: true
   },
+  'Bagwise Current Stock': {
+    component: (props) => <StandardReport endpoint="bagwise_current_stock" title="Bagwise Current Stock" {...props} />,
+    needsDateRange: false
+  },
+  'Bagwise Delivered': {
+    component: (props) => <StandardReport endpoint="bagwise_delivered" title="Bagwise Delivered" {...props} />,
+    needsDateRange: true
+  },
   // History Reports
   'Raw-Material Stock History': {
     component: RawMaterialStockHistory,

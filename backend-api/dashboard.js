@@ -111,8 +111,16 @@ router.get("/gcharcoal", authenticate,async(req,res) => {
         percent_unburnt: parseFloat(row.percent_unburnt),
         percent_minus20: parseFloat(row.percent_minus20)
         }));
+    const GCharcoal_impurities_chart = RawData1.map(row => ({
+        supplier_name: row.supplier_name,
+        inward_number: row.inward_number,
+        Stones: parseFloat(row.total_stone_weight),
+        Unburnt: parseFloat(row.total_unburnt_weight),
+        Minus20: parseFloat(row.total_minus_weight)
+      }));
 
-    res.json({ data : {GCharcoal_chartData,GCharcoal_chart_keys,GCharcoal_stock,GCharcoal_percent_stacked }});
+
+    res.json({ data : {GCharcoal_chartData,GCharcoal_chart_keys,GCharcoal_stock,GCharcoal_percent_stacked,GCharcoal_impurities_chart }});
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Database error" });
@@ -123,7 +131,25 @@ router.get("/kilnstock", authenticate,async(req,res) => {
   try {
     const {accountid} = req.user;
     const table = `${accountid}_kiln_output`
-    const que = `select from_the_kiln as kiln,sum(weight_with_stones) as weight from ${table} where exkiln_stock = 'InStock' group by from_the_kiln; `
+    const que = `select from_the_kiln as kiln,sum(weight_with_stones) as weight from ${table} where exkiln_stock = 'De-Stoning' group by from_the_kiln; `
+    const result = await pool.query(que);
+
+    const RawData = result.rows
+    const exkiln_stock = RawData.reduce((sum, item) => sum + parseFloat(item.weight), 0);
+    const exkiln_chartData = RawData;    
+
+    res.json({ data : {exkiln_chartData,exkiln_stock }});
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Database error" });
+  }
+})
+
+router.get("/kilnstock_destoned", authenticate,async(req,res) => {
+  try {
+    const {accountid} = req.user;
+    const table = `${accountid}_kiln_output`
+    const que = `select from_the_kiln as kiln,sum(weight_with_stones) as weight from ${table} where exkiln_stock = 'De-Stoning' group by from_the_kiln; `
     const result = await pool.query(que);
 
     const RawData = result.rows
@@ -174,5 +200,67 @@ function groupBySupplierAndInwardWeight(rawData) {
 
   return grouped;
 }
+
+
+router.get("/stages", authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const view = `${accountid}_dashboard_stages_summary_view`;
+
+  try {
+    const result = await pool.query(`SELECT * FROM ${view} LIMIT 1`);
+    const row = result.rows[0];
+
+    const formattedStages = [
+      { label: "Charcoal Stock", value: `${row.charcoal_stock} kg` },
+      { label: "GCharcoal Stock", value: `${row.gcharcoal_stock} kg` },
+      { label: "Exkiln With Stone", value: `${row.exkiln_with_stone_stock} kg`},
+      { label: "Exkiln Without Stone", value: `${row.exkiln_without_stone_stock} kg` },
+      { label: "Final Grade Stock", value: `${row.final_grade_stock} kg` },
+    ];
+
+    res.json({ stages: formattedStages });
+  } catch (err) {
+    console.error("Dashboard stages error:", err);
+    res.status(500).json({ error: "Could not fetch dashboard stages" });
+  }
+});
+
+// routes/dashboard.js or similar
+
+router.get('/kiln_yield_chart', authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const table = `${accountid}_kiln_daily_summary`;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT 
+        kiln,
+        date_str,
+        ROUND((kiln_output_weight / NULLIF(raw_material_out_weight, 0)) * 100, 2) AS kiln_yield
+      FROM ${table}
+      WHERE TO_DATE(date_str, 'DD-MM-YYYY') >= CURRENT_DATE - INTERVAL '6 days'
+      ORDER BY TO_DATE(date_str, 'DD-MM-YYYY') ASC
+      `
+    );
+
+    // Group data by kiln
+    const grouped = {};
+    result.rows.forEach(row => {
+      if (!grouped[row.kiln]) grouped[row.kiln] = [];
+      grouped[row.kiln].push({
+        date: row.date_str,
+        yield: Number(row.kiln_yield),
+      });
+    });
+
+    res.json({ success: true, data: grouped });
+  } catch (err) {
+    console.error("Error fetching kiln yield chart data:", err);
+    res.status(500).json({ success: false, error: "Internal Server Error" });
+  }
+});
+
+
 
 module.exports = router;

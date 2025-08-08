@@ -8,6 +8,7 @@ const checkAccess= require('./checkaccess.js');
 // 🛡️ Auth Middleware
 const { authenticate } = require('./authenticate');
 
+
 router.post("/grade_wise_in-stock", authenticate, async (req, res) => {
   try {
     const { accountid } = req.user;
@@ -542,6 +543,56 @@ router.post("/kiln_load", authenticate, async (req, res) => {
                     FROM ${table}
                     WHERE kiln_load_time::date BETWEEN TO_DATE($1, 'ddmmyy') 
                     AND TO_DATE($2, 'ddmmyy')`;
+    const { rows } = await pool.query(query,[start_date,end_date]);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /destoning_summary:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+router.post("/bagwise_current_stock", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const table = `${accountid}_screening_outward`;
+
+    const query = `SELECT screening_out_dt,bag_no,weight,grade, ctc 
+      FROM ${table}
+      WHERE delivery_status = 'InStock'  `;
+    const { rows } = await pool.query(query);
+
+    const columns = Object.keys(rows[0] || {});
+    res.json({ columns, rows });
+
+  } catch (err) {
+    console.error('Error in /destoning_summary:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+router.post("/bagwise_delivered", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body;
+    const table = `${accountid}_screening_outward`;
+    const table1 = `${accountid}_destoning`;
+
+    const query =  `SELECT screening_out_dt as bag_gen_time,bag_no,weight,grade,ctc,
+                    stock_change_userid as stock_upd_user,stock_change_dt as stock_upd_dt
+                    FROM ${table}
+                    WHERE delivery_status = 'Delivered'  
+                    and screening_out_dt::date BETWEEN TO_DATE($1, 'ddmmyy') 
+                    AND TO_DATE($2, 'ddmmyy')
+                    UNION 
+                    select bag_generated_timestamp as bag_gen_time,ds_bag_no as bag_no,
+                    weight_out as weight,'exkiln' as grade,quality_ctc as ctc ,
+                    stock_upd_user,stock_upd_dt
+                    FROM ${table1} where final_destination = 'Delivered' 
+                    and bag_generated_timestamp::date between to_date($1,'ddmmyy') AND TO_DATE($2, 'ddmmyy')
+                    `;
     const { rows } = await pool.query(query,[start_date,end_date]);
 
     const columns = Object.keys(rows[0] || {});
