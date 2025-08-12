@@ -993,3 +993,97 @@ LEFT JOIN (
 ) b ON a.inward_number = b.inward_number
 WHERE a.material_inward_status IS NULL;
 
+
+
+
+DROP VIEW IF EXISTS samcarbons_rms_summary_view_v2;
+
+CREATE OR REPLACE VIEW samcarbons_rms_summary_view_v2 AS
+WITH inward_agg AS (
+  SELECT inward_number, SUM(weight) AS inward_weight
+  FROM samcarbons_material_inward_bag
+  GROUP BY inward_number
+),
+outward_agg AS (
+  SELECT
+    inward_number,
+    SUM(CASE WHEN grade ILIKE 'Grade%'      THEN weight ELSE 0 END) AS gcharcoal_weight,
+    SUM(CASE WHEN LOWER(grade) LIKE '%stone%'   THEN weight ELSE 0 END) AS stones_weight,
+    SUM(CASE WHEN LOWER(grade) LIKE '%unburnt%' THEN weight ELSE 0 END) AS unburnt_weight,
+    SUM(CASE WHEN grade ILIKE '-20%'        THEN weight ELSE 0 END) AS minus20_weight
+  FROM samcarbons_material_outward_bag
+  GROUP BY inward_number
+)
+SELECT
+  r.material_arrivaltime,
+  r.supplier_name,
+  r.supplier_weight,
+  r.inward_number,
+  r.our_weight AS weight_at_security,
+
+  -- ✅ Status fields (inward)
+  r.material_inward_status,
+  r.material_inward_remarks,
+  r.material_inward_status_upddt,
+  r.material_inward_userid,
+
+  -- ✅ Status fields (outward)
+  r.material_outward_status,
+  r.material_outward_remarks,
+  r.material_outward_status_upddt,
+  r.material_outward_userid,
+
+  -- ✅ Convenience alias for reporting
+  r.material_outward_status_upddt AS outward_status_upddt,
+
+  -- Aggregates
+  COALESCE(i.inward_weight, 0) AS inward_weight,
+  COALESCE(o.gcharcoal_weight, 0) AS gcharcoal_weight,
+  COALESCE(o.stones_weight, 0)    AS stones_weight,
+  COALESCE(o.unburnt_weight, 0)   AS unburnt_weight,
+  COALESCE(o.minus20_weight, 0)   AS minus20_weight,
+
+  -- Computed
+  (COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) AS physical_loss,
+  (COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) AS total_weight_out,
+  (r.our_weight-COALESCE(i.inward_weight, 0)) AS "inward-security_weight",
+  (COALESCE(i.inward_weight, 0) - (COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0) )) AS "inward_weight-totaloutward",
+  (r.our_weight - (COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0) - COALESCE(i.inward_weight, 0))
+    + (COALESCE(i.inward_weight, 0) )) AS rms_inward_loss,
+  (COALESCE(i.inward_weight, 0) - COALESCE(o.gcharcoal_weight, 0) ) AS rms_processing_loss,
+  (
+    (COALESCE(i.inward_weight, 0)-(COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) )
+    + (r.our_weight-COALESCE(i.inward_weight, 0))
+    + (COALESCE(i.inward_weight, 0)-COALESCE(o.gcharcoal_weight, 0) )
+  ) AS rms_total_loss,
+  ROUND(
+    (
+      (
+        (COALESCE(i.inward_weight, 0)-(COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) )
+        + (r.our_weight-COALESCE(i.inward_weight, 0))
+        + (COALESCE(i.inward_weight, 0)-COALESCE(o.gcharcoal_weight, 0) )
+      )  / NULLIF(r.our_weight, 0)
+    ) * 100, 2
+  ) AS "rms_total_loss/our_weight",
+  (r.supplier_weight-COALESCE(i.inward_weight, 0) ) AS "supplier_weight-inward_weight",
+  (
+    (COALESCE(i.inward_weight, 0)-(COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) )
+    + (r.supplier_weight-COALESCE(i.inward_weight, 0))
+    + (COALESCE(i.inward_weight, 0)-COALESCE(o.gcharcoal_weight, 0) )
+  ) AS rms_total_loss_with_supplier_weight,
+  ROUND(
+    (
+      (
+        (COALESCE(i.inward_weight, 0)-(COALESCE(o.gcharcoal_weight, 0) + COALESCE(o.stones_weight, 0) + COALESCE(o.unburnt_weight, 0) + COALESCE(o.minus20_weight, 0)) )
+        + (r.supplier_weight-COALESCE(i.inward_weight, 0))
+        + (COALESCE(i.inward_weight, 0)-COALESCE(o.gcharcoal_weight, 0) )
+      ) / NULLIF(r.supplier_weight, 0)
+    ) * 100, 2
+  ) AS "rms_total_loss_with_supplier_wieght/our_weight"
+FROM samcarbons_rawmaterial_rcvd r
+LEFT JOIN inward_agg  i ON r.inward_number = i.inward_number
+LEFT JOIN outward_agg o ON r.inward_number = o.inward_number
+WHERE LOWER(r.material_outward_status) = 'completed'
+  AND r.material_outward_status_upddt IS NOT NULL;
+
+

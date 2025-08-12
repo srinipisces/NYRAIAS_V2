@@ -42,7 +42,7 @@ export default function StockTable({
 
   const getStatusOptions = (bag_no) => {
     const prefix = bag_no.toLowerCase();
-    if (prefix.startsWith('scr')) return ['InStock', 'Delivered', 'Screening'];
+    if (prefix.startsWith('scr')) return ['InStock', 'Delivered', 'Screening','Re-Processing'];
     if (prefix.startsWith('ds')) return ['InStock', 'Delivered','Screening'];
     return ['InStock']; // default/fallback
   };

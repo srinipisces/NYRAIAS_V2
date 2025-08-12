@@ -51,15 +51,14 @@ function GCharcoalCharts({ data }) {
       }}
     >
       {/* Chart 1: GCharcoal Stock Supplier Wise */}
-      <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowX: 'auto',backgroundColor: '#f6f8fa' }}>
-        <Typography variant="subtitle1" gutterBottom>
-          GC Stock Supplier Wise
+      <Paper sx={{ flex: 1, minWidth: { xs: '100%', sm: '0' }, p: 2 }}>
+        <Typography variant="h6" fontWeight="bold" gutterBottom>
+          GCharcoal Stock Supplier Wise
         </Typography>
         <Box sx={{ height: 300 }}>
           <ResponsiveBar
             data={GCharcoal_chartData}
             keys={GCharcoal_chart_keys}
-            enableGridX
             indexBy="supplier_name"
             groupMode="stacked"
             margin={{ top: 20, right: 20, bottom: 40, left: 50 }}
@@ -75,7 +74,13 @@ function GCharcoalCharts({ data }) {
         </Box>
       </Paper>
 
-      
+      {/* Chart 2: Impurities as vertical stack of horizontal-bar charts */}
+      <Paper sx={{ flex: 1, minWidth: { xs: '100%', sm: '0' }, p: 2 }}>
+        <Typography variant="h6" fontWeight="bold" gutterBottom>
+          Impurities (per Inward Number)
+        </Typography>
+        <ImpuritySmallMultiples raw={GCharcoal_impurities_chart} />
+      </Paper>
     </Box>
   );
 }

@@ -15,10 +15,10 @@ export default function GradeWiseStockChart() {
   }, []);
 
   return (
-    <Paper sx={{ p: 2, height: '100%', width: '100%', boxSizing: 'border-box' ,overflowY:'auto',backgroundColor: '#f6f8fa'}}>
+    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 },overflowY: 'auto',backgroundColor: '#f6f8fa' }}>
       <Typography variant="subtitle1">Grade-wise Stock</Typography>
       {data.map((g, idx) => (
-        <Box key={idx} sx={{ mt: 2 }}>
+        <Box key={idx} sx={{ mt: 2}}>
           <Typography fontSize={14}>{g.grade}</Typography>
           <Box
             sx={{

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Box,
   Paper,
@@ -11,34 +11,61 @@ import {
 import { LineChart } from '@mui/x-charts';
 import axios from 'axios';
 
+const COLORS = ['#1976d2', '#2e7d32', '#ef6c00']; // A, B, C (extend if more)
+
 export default function KilnYieldCharts() {
-  const [data, setData] = useState({});
+  const [series, setSeries] = useState([]);
+  const [xData, setXData] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState(null);
 
   const theme = useTheme();
   const isSmallScreen = useMediaQuery(theme.breakpoints.down('sm'));
 
   useEffect(() => {
-    const fetchData = async () => {
+    (async () => {
       try {
         const res = await axios.get(
           `${import.meta.env.VITE_API_URL}/api/dashboard/kiln_yield_chart`,
           { withCredentials: true }
         );
-        if (res.data.success) {
-          setData(res.data.data);
-        } else {
-          throw new Error("API returned unsuccessful response");
-        }
+        if (!res?.data?.success) throw new Error('API returned unsuccessful response');
+
+        const obj = res.data.data || {}; // { "Kiln A": [{date,yield},...], "Kiln B": [...], ... }
+
+        // Build a unified, ordered list of dates (keep first-seen order)
+        const dateList = [];
+        const seen = new Set();
+        Object.values(obj).forEach((rows) => {
+          (rows || []).forEach(({ date }) => {
+            if (date != null && !seen.has(date)) {
+              seen.add(date);
+              dateList.push(date);
+            }
+          });
+        });
+
+        // Build one series per kiln, aligning to xData (null for missing)
+        const kilnNames = Object.keys(obj);
+        const nextSeries = kilnNames.map((name, i) => {
+          const map = new Map((obj[name] || []).map((r) => [r.date, Number(r.yield)]));
+          return {
+            label: name,
+            data: dateList.map((d) => (map.has(d) ? map.get(d) : null)),
+            color: COLORS[i % COLORS.length],
+            showMark: true,
+          };
+        });
+
+        setXData(dateList);
+        setSeries(nextSeries);
+        setError(null);
       } catch (err) {
-        console.error("Failed to fetch kiln yield chart:", err);
-        setError(true);
+        setError(err?.message || 'Failed to load kiln yield data');
       } finally {
         setLoading(false);
       }
-    };
-    fetchData();
+    })();
   }, []);
 
   if (loading) {
@@ -50,81 +77,34 @@ export default function KilnYieldCharts() {
   }
 
   if (error) {
-    return (
-      <Alert severity="error" sx={{ mb: 2 }}>
-        Error loading kiln yield data
-      </Alert>
-    );
+    return <Alert severity="error">Error loading kiln yield data: {error}</Alert>;
   }
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: {
-          xs: 'column',
-          sm: 'row',
-        },
-        gap: 2,
-        width: '100%',
-        overflowX: 'auto',
-        pb: 2,
-      }}
-    >
-      {Object.keys(data).map((kilnLabel) => {
-        const kilnData = data[kilnLabel];
-        const xAxisData = kilnData.map((entry) => entry.date);
-        const yAxisData = kilnData.map((entry) => entry.yield);
+    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', maxWidth: { xs:'100%', sm:1000 }, height: 350, mx:'auto', width:'100%' }}>
+      <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
+        Kiln Yield (All Kilns)
+      </Typography>
 
-        return (
-          <Paper
-            key={kilnLabel}
-            sx={{
-              p: 2,
-              minWidth: 250,
-              width: 250,
-              flexShrink: 0,
-              overflowX: 'hidden',
-              backgroundColor: '#f6f8fa',
-            }}
-          >
-            <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
-              {`Yield Chart (${kilnLabel})`}
-            </Typography>
-            <LineChart
-              xAxis={[
-                {
-                  scaleType: 'point',
-                  data: xAxisData,
-                  tickLabelStyle: { display: 'none' },
-                },
-              ]}
-              yScale={{ type: 'linear', min: 0 }}
-              series={[
-                {
-                  data: yAxisData,
-                  label: kilnLabel,
-                  color: '#1976d2',
-                },
-              ]}
-              height={200}
-              tooltip={{
-                trigger: 'item',
-                render: ({ dataIndex }) => {
-                  const date = xAxisData[dataIndex];
-                  const value = yAxisData[dataIndex];
-                  return (
-                    <Box sx={{ fontSize: '0.75rem', p: 1 }}>
-                      <div><strong>Date:</strong> {date}</div>
-                      <div><strong>Yield:</strong> {value}%</div>
-                    </Box>
-                  );
-                },
-              }}
-            />
-          </Paper>
-        );
-      })}
-    </Box>
+      <LineChart
+        xAxis={[
+          {
+            scaleType: 'point',
+            data: xData,
+            tickLabelStyle: {
+              fontSize: isSmallScreen ? 10 : 12,
+              angle: isSmallScreen ? -45 : 0,
+              textAnchor: isSmallScreen ? 'end' : 'middle',
+            },
+          },
+        ]}
+        yScale={{ type: 'linear', min: 0 }} // add max: 100 if yield is % out of 100
+        series={series}
+        height={isSmallScreen ? 260 : 300}
+        grid={{ vertical: true, horizontal: true }}
+        tooltip={{ trigger: 'axis' }} // shows all kiln values for the hovered date
+        margin={{ left: 0, right: 30, top: 8, bottom: isSmallScreen ? 44 : 24 }}
+      />
+    </Paper>
   );
 }

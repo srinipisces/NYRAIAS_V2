@@ -46,7 +46,7 @@ export default function FlowStageBar() {
       <Paper
         sx={{
           p: 2,
-          mb: 4,
+          mb: 2,
           display: 'flex',
           flexWrap: 'wrap',
           gap: 2,

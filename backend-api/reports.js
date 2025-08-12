@@ -305,7 +305,7 @@ router.post("/rms_performance", authenticate, async (req, res) => {
     const { accountid } = req.user;
     const { page = 1, limit = 10 } = req.body;
     const offset = (page - 1) * limit;
-    const rep_view = `${accountid}_rms_summary_view`;
+    const rep_view = `${accountid}_rms_summary_view_v2`;
     // Main paginated query
     const dataQuery = `
       select * from ${rep_view}

@@ -8,6 +8,12 @@ export default defineConfig({
   server: {
     port: 5174,
     host: true, // Required for Docker access
+    hmr: {
+        protocol: 'ws',
+        clientPort: 80,
+        host: '10.0.0.211',
+        path: '/activatedcarbon/'
+      },
   },
   
 })

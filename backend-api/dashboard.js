@@ -233,14 +233,14 @@ router.get('/kiln_yield_chart', authenticate, async (req, res) => {
 
   try {
     const result = await pool.query(
-      `
-      SELECT 
+      `SELECT 
         kiln,
         date_str,
         ROUND((kiln_output_weight / NULLIF(raw_material_out_weight, 0)) * 100, 2) AS kiln_yield
       FROM ${table}
-      WHERE TO_DATE(date_str, 'DD-MM-YYYY') >= CURRENT_DATE - INTERVAL '6 days'
-      ORDER BY TO_DATE(date_str, 'DD-MM-YYYY') ASC
+      WHERE TO_DATE(date_str, 'DD-MM-YYYY') >= CURRENT_DATE - INTERVAL '2 weeks'
+        AND TO_DATE(date_str, 'DD-MM-YYYY') <  CURRENT_DATE  -- excludes today
+      ORDER BY TO_DATE(date_str, 'DD-MM-YYYY') ASC;
       `
     );
 
@@ -261,6 +261,54 @@ router.get('/kiln_yield_chart', authenticate, async (req, res) => {
   }
 });
 
+router.get('/rms-loss-last30', authenticate, async (req, res) => {
+  const { accountid } = req.user;
+
+  // simple guard so accountid can't be used to inject identifier
+  if (!/^[a-zA-Z0-9_]+$/.test(accountid)) {
+    return res.status(400).json({ error: 'Invalid account id' });
+  }
+
+  const viewName = `${accountid}_rms_summary_view_v2`;
+  try {
+    const sql = `
+      WITH data AS (
+        SELECT
+          inward_number,
+          outward_status_upddt,
+          -- alias the awkward column name:
+          ("rms_total_loss_with_supplier_wieght/our_weight")::numeric AS rms_total_loss_pct
+        FROM ${viewName}
+        WHERE outward_status_upddt >= NOW() - INTERVAL '30 days'
+        and inward_number not in ('I-1017','I-1012','I-1011','I-1013','I-1009')
+      )
+      SELECT
+        COALESCE(ROUND(AVG(rms_total_loss_pct)::numeric, 2), 0) AS avg_pct,
+        json_agg(
+          json_build_object(
+            'inward_number', inward_number,
+            'outward_status_upddt', outward_status_upddt,
+            'rms_total_loss_pct', rms_total_loss_pct
+          )
+          ORDER BY outward_status_upddt ASC
+        ) AS rows
+      FROM data;
+    `;
+
+    const { rows } = await pool.query(sql);
+    const payload = rows[0] || { rows: null, avg_pct: 0 };
+
+    // normalize empty to []
+    res.json({
+      success: true,
+      avg_pct: Number(payload.avg_pct || 0),
+      rows: payload.rows || [],
+    });
+  } catch (err) {
+    console.error('Error fetching rms-loss-last30:', err);
+    res.status(500).json({ success: false, error: 'Failed to fetch report' });
+  }
+});
 
 
 module.exports = router;

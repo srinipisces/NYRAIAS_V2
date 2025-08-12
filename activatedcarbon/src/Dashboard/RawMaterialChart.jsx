@@ -35,7 +35,7 @@ export default function RawMaterialStock() {
   }, []);
 
   return (
-    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowX: 'auto',backgroundColor: '#f6f8fa' }}>
+    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowX: 'auto',backgroundColor: '#f6f8fa'}}>
       <Typography variant="subtitle1" gutterBottom>
         Charcoal Stock (Supplier-wise)
       </Typography>
