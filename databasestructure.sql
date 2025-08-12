@@ -527,6 +527,10 @@ BEGIN
     prefix := 'Screen_S_' || date_str || '_';
   ELSIF TRIM(NEW.grade) = '-30' THEN
     prefix := 'Screen_V_' || date_str || '_';
+  ELSIF TRIM(NEW.grade) = '8x16' THEN
+    prefix := 'Screen_L_' || date_str || '_';
+  ELSIF TRIM(NEW.grade) = '12x30' THEN
+    prefix := 'Screen_P_' || date_str || '_';
   ELSE
     prefix := 'Screen_' || date_str || '_';
   END IF;
@@ -538,7 +542,7 @@ BEGIN
   SELECT MAX(CAST(SUBSTRING(bag_no FROM '[0-9]{3}$') AS INTEGER))
   INTO last_counter
   FROM testbed_screening_outward
-  WHERE bag_no ~ ('^Screen(_[RSV])?_[0-9]{6}_[0-9]{3}$');
+  WHERE bag_no ~ ('^Screen(_[RSVLP])?_[0-9]{6}_[0-9]{3}$');
 
   IF last_counter IS NULL OR last_counter >= 999 THEN
     last_counter := 0;
@@ -983,6 +987,13 @@ SELECT
   FROM samcarbons_screening_outward
   WHERE delivery_status = 'InStock'
 ), 0) AS final_grade_stock
+
+--- re-processing
+  COALESCE((
+  SELECT SUM(weight)
+  FROM samcarbons_screening_outward
+  WHERE delivery_status = 'Re-Processing'
+), 0) AS re_processing
 
 
 FROM samcarbons_rawmaterial_rcvd a

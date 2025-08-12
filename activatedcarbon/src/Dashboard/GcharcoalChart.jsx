@@ -65,7 +65,7 @@ function GCharcoalCharts({ data }) {
             colors={{ scheme: 'nivo' }}
             axisBottom={null}
             tooltip={({ id, value, indexValue }) => (
-              <Box sx={{ p: 1, fontSize: '0.75rem' }}>
+              <Box sx={{ p: 1, fontSize: '0.75rem',background: '#fff', border: '1px solid #ccc', boxShadow: '0 2px 8px rgba(0,0,0,.15)' }}>
                 <div><strong>{id}</strong>: {value} kg</div>
                 <div><strong>Supplier:</strong> {indexValue}</div>
               </Box>

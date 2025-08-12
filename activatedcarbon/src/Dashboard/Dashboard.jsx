@@ -8,32 +8,11 @@ import KilnYieldCharts from './KilnYieldCharts';
 import GCharcoalChartsWrapper from './GcharcoalChart';
 import ImpuritiesChart from './ImpuritiesChart';
 import RMSLossChart from './RMSLossChart';
-import { styled } from '@mui/material/styles';
-const DummyBox = ({ label, color }) => (
-  <Paper
-    sx={{
-      p: 2,
-      textAlign: 'center',
-      border: `2px solid ${color}`,
-      height: 200,
-    }}
-  >
-    <Typography>{label}</Typography>
-  </Paper>
-);
-const Item = styled(Paper)(({ theme }) => ({
-  backgroundColor: '#f6f8fa',
-  ...theme.typography.body2,
-  padding: theme.spacing(1),
-  textAlign: 'center',
-  color: (theme.vars ?? theme).palette.text.secondary,
-  ...theme.applyStyles('dark', {
-    backgroundColor: '#f6f8fa',
-  }),
-}));
+
+
 
 const Dashboard = () => (
-  <Box sx={{ px: 1, pt: 2 ,width: {xs:'100%',sm:1000}}}>
+  <Box sx={{ px: 0, pt: 2 ,width: {xs:'100%',sm:1000}}}>
   <Typography variant="h5" gutterBottom>
     Production & Stock Dashboard
   </Typography>

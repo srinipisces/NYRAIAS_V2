@@ -216,7 +216,7 @@ router.get("/stages", authenticate, async (req, res) => {
       { label: "Exkiln With Stone", value: `${row.exkiln_with_stone_stock} kg`},
       { label: "Exkiln Without Stone", value: `${row.exkiln_without_stone_stock} kg` },
       { label: "Final Grade Stock", value: `${row.final_grade_stock} kg` },
-      { label: "Re-Processing", value: `${row.final_grade_stock} kg` },
+      { label: "Re-Processing", value: `${row.re_processing} kg` },
     ];
 
     res.json({ stages: formattedStages });

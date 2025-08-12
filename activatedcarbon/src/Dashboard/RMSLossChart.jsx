@@ -1,12 +1,14 @@
 // src/Reports/RmsLossLast30Chart.jsx
 import React, { useEffect, useState, useMemo } from 'react';
 import axios from 'axios';
-import { Box, Paper, Typography, CircularProgress, Alert } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
+import { Box, Paper, Typography, CircularProgress, Alert ,useTheme,useMediaQuery} from '@mui/material';
+
+
 import { ResponsiveBar } from '@nivo/bar';
 
 export default function RMSLossChart() {
   const theme = useTheme();
+  const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
   const [rows, setRows] = useState([]);
   const [avgPct, setAvgPct] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -70,8 +72,26 @@ export default function RMSLossChart() {
     return `${start.toLocaleDateString()} – ${end.toLocaleDateString()}`;
   }, []);
 
+
+  const axisBottomMobile = {
+    tickValues: [],   // no ticks
+    tickSize: 0,
+    tickPadding: 0,
+    legend: 'Inward Numbers',     // single legend
+    legendOffset: 14,
+    legendPosition: 'middle',
+  };
+
+  const axisBottomDesktop = {
+    tickSize: 3,
+    tickPadding: 4,
+    legend: 'Inward Numbers',
+    legendOffset: 30,
+    legendPosition: 'middle',
+  };
+
   return (
-    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', width:'100%', height: 350, mx:'auto' }}>
+    <Paper sx={{ p: {xs:1,sm:3}, bgcolor: '#f6f8fa', width:'100%', height: 350, mx:'auto' }}>
       <Typography variant="h6" gutterBottom>
         RMS Total Loss % — Last 30 days
       </Typography>
@@ -97,10 +117,11 @@ export default function RMSLossChart() {
             data={data}
             indexBy="inward_number"
             keys={['rms_total_loss_pct']}
-            margin={{ top: 30, right: 24, bottom: 30, left: 10 }}
+            margin={{ top: 30, right: 24, bottom: isMobile ? 20 : 35, left: 20 }}
             padding={0.3}
             valueFormat={v => `${Number(v || 0).toFixed(2)}%`}
-            axisBottom={null}
+            axisBottom={isMobile ? axisBottomMobile : axisBottomDesktop}
+            axisLeft={{legend : 'RMS Total Loss %',legendOffset: -10,tickValues: []}}
             enableGridX
             enableLabel={false}
             colorBy="indexValue"               // color by each inward (category)

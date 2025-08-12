@@ -81,7 +81,7 @@ export default function KilnYieldCharts() {
   }
 
   return (
-    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', width:'100%', height: 350 }}>
+    <Paper sx={{ p: {xs:1,sm:3}, bgcolor: '#f6f8fa', width:'100%', height: 350 }}>
       <Typography variant="subtitle1" fontWeight="bold" gutterBottom>
         Kiln Yield (All Kilns)
       </Typography>
@@ -98,12 +98,14 @@ export default function KilnYieldCharts() {
             },
           },
         ]}
-        yScale={{ type: 'linear', min: 0 }} // add max: 100 if yield is % out of 100
+        //yScale={{ type: 'linear', min: 0 ,}} // add max: 100 if yield is % out of 100
+        yAxis={[{label: 'Yield %',min: 0,max:100}]}
         series={series}
         height={isSmallScreen ? 260 : 300}
         grid={{ vertical: true, horizontal: true }}
         tooltip={{ trigger: 'axis' }} // shows all kiln values for the hovered date
-        margin={{ left: 0, right: 35, top: 8, bottom: isSmallScreen ? 10 : 5 }}
+        margin={{ left: 0, right: 35, top: 8, bottom: isSmallScreen ? 3 : 5 }}
+        
       />
       
     </Paper>

@@ -84,10 +84,38 @@ export default function ImpuritiesChart({
   const chartHeight = Math.max(160, 40 + rows.length * rowHeight);
 
   return (
-    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', width:'100%', height: 300 }}>
+    <Paper sx={{ p: {xs:1,sm:3}, bgcolor: '#f6f8fa', width:'100%', height: 300 }}>
       <Typography variant="subtitle1" sx={{ mb: 1, textAlign: 'center' }}>
         Impurities by Inward
       </Typography>
+      {/* Legend row */}
+      <Box
+        sx={{
+          display: 'flex',
+          gap: 2,
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          justifyContent: 'center',
+          mb: 1,
+        }}
+      >
+        {KEYS.map((k) => (
+          <Box key={k} sx={{ display: 'inline-flex', alignItems: 'center', gap: 1 }}>
+            <Box
+              sx={{
+                width: 12,
+                height: 12,
+                bgcolor: COLOR_MAP[k],
+                borderRadius: '2px',
+                border: '1px solid rgba(0,0,0,0.2)',
+              }}
+            />
+            <Typography variant="caption">
+              {k === 'Minus20' ? '-20' : k}
+            </Typography>
+          </Box>
+        ))}
+      </Box>
 
       <Box sx={{ height: 250 }}>
         <ResponsiveBar
@@ -97,13 +125,13 @@ export default function ImpuritiesChart({
           layout="horizontal"
           groupMode="stacked"
           padding={0.2}
-          margin={{ top: 10, right: 10, bottom: 30, left: 10 }}
+          margin={{ top: 10, right: 15, bottom: 35, left: 20 }}
           enableGridX
-          axisLeft={null}
+          axisLeft={{legend : 'Inward Numbers',legendOffset: -10,tickValues: []}}
           axisBottom={{
             tickSize: 1,
             tickPadding: 1,
-            legend: '',
+            legend: 'Weight in Kg',
             legendOffset: 24,
             legendPosition: 'middle',
           }}

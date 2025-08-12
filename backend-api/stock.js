@@ -29,7 +29,6 @@ router.get('/instock', authenticate, async (req, res) => {
       FROM ${screenTable}
       WHERE delivery_status = 'InStock' and ctc > 0
 
-      LIMIT $1 OFFSET $2
     `;
 
     const dataResult = await pool.query(dataQuery, [limit, offset]);
