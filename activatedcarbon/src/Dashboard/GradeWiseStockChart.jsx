@@ -15,7 +15,15 @@ export default function GradeWiseStockChart() {
   }, []);
 
   return (
-    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 },overflowY: 'auto',backgroundColor: '#f6f8fa' }}>
+    <Paper sx={{
+    p: 1,
+    height: { xs: 'auto', sm: 350 },
+    width: '100%',
+    minWidth: 0,                // important in Grid/Flex
+    backgroundColor: '#f6f8fa',
+    overflowX: 'auto',
+  }}>
+    <Box sx={{p:2}}>
       <Typography variant="subtitle1">Grade-wise Stock</Typography>
       {data.map((g, idx) => (
         <Box key={idx} sx={{ mt: 2}}>
@@ -27,9 +35,10 @@ export default function GradeWiseStockChart() {
               bgcolor: colors[idx % 2],
             }}
           />
-          <Typography fontSize={12}>Weight: {g.weight} kg</Typography>
+          <Typography fontSize={12}> {g.weight} kg</Typography>
         </Box>
       ))}
+    </Box>
     </Paper>
   );
 }

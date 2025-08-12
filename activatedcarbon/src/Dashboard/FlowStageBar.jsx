@@ -10,6 +10,7 @@ const fallbackStages = [
   { label: 'Exkiln With Stone', value: '-' },
   { label: 'Exkiln Without Stone', value: '-' },
   { label: 'Final Grade Stock', value: '-' },
+  { label: 'Re-Processing', value: '-' },
 ];
 
 export default function FlowStageBar() {
@@ -51,7 +52,8 @@ export default function FlowStageBar() {
           flexWrap: 'wrap',
           gap: 2,
           justifyContent: 'center',
-          backgroundColor: '#f6f8fa'
+          backgroundColor: '#f6f8fa',
+          width:'100%'
         }}
       >
         {stages.map((stage, idx) => (

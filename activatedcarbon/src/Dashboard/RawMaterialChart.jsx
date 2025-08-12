@@ -35,13 +35,21 @@ export default function RawMaterialStock() {
   }, []);
 
   return (
-    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowX: 'auto',backgroundColor: '#f6f8fa'}}>
+    <Paper sx={{
+    p: 1,
+    height: { xs: 'auto', sm: 350 },
+    width: '100%',
+    minWidth: 0,                // important in Grid/Flex
+    backgroundColor: '#f6f8fa',
+    overflowX: 'auto',
+  }}>
+    <Box sx={{p:2}}>
       <Typography variant="subtitle1" gutterBottom>
-        Charcoal Stock (Supplier-wise)
+        Charcoal Stock 
       </Typography>
 
       {loading && (
-        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 4 }}>
+        <Box sx={{ display: 'flex', justifyContent: 'center', mt: 2 }}>
           <CircularProgress size={24} />
         </Box>
       )}
@@ -87,6 +95,7 @@ export default function RawMaterialStock() {
           />
         </Box>
       )}
+    </Box>
     </Paper>
   );
 }

@@ -41,30 +41,29 @@ function GCharcoalCharts({ data }) {
   } = data || {};
 
   return (
-    <Box
-      sx={{
-        display: 'flex',
-        flexDirection: { xs: 'column', sm: 'row' },
-        gap: 2,
-        width: '100%',
-        flexWrap: 'wrap',
-      }}
-    >
-      {/* Chart 1: GCharcoal Stock Supplier Wise */}
-      <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowX: 'auto',backgroundColor: '#f6f8fa' }}>
-        <Typography variant="subtitle1" gutterBottom>
-          GC Stock Supplier Wise
+      <Paper sx={{
+          p: 1,
+          height: { xs: 'auto', sm: 350 },
+          width: '100%',
+          minWidth: 0,                // important in Grid/Flex
+          backgroundColor: '#f6f8fa',
+          overflowX: 'auto',
+        }}>
+        <Box sx={{p:2}} >
+        <Typography variant="subtitle1">
+          GC Stock 
         </Typography>
-        <Box sx={{ height: 300 }}>
+        <Box sx={{ height: 300 ,width:'100%',mt:2}}>
           <ResponsiveBar
             data={GCharcoal_chartData}
             keys={GCharcoal_chart_keys}
             enableGridX
             indexBy="supplier_name"
             groupMode="stacked"
-            margin={{ top: 20, right: 20, bottom: 40, left: 50 }}
+            margin={{ top: 20, right: 20, bottom: 20, left: 50 }}
             padding={0.3}
             colors={{ scheme: 'nivo' }}
+            axisBottom={null}
             tooltip={({ id, value, indexValue }) => (
               <Box sx={{ p: 1, fontSize: '0.75rem' }}>
                 <div><strong>{id}</strong>: {value} kg</div>
@@ -73,9 +72,10 @@ function GCharcoalCharts({ data }) {
             )}
           />
         </Box>
+        </Box>
       </Paper>
 
       
-    </Box>
+  
   );
 }

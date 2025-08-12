@@ -57,7 +57,7 @@ export default function RMSLossChart() {
     return (
       <>
         <line x1={0} x2={innerWidth} y1={y} y2={y} strokeWidth={2} strokeDasharray="6,4" stroke="currentColor" />
-        <text x={innerWidth - 4} y={y - 6} textAnchor="end" fontSize={12}>
+        <text x={innerWidth - 4} y={y - 6} textAnchor="end" fontSize={16}>
           Avg: {avgPct.toFixed(2)}%
         </text>
       </>
@@ -71,7 +71,7 @@ export default function RMSLossChart() {
   }, []);
 
   return (
-    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', maxWidth: { xs:'100%', sm:1000 }, height: 350, mx:'auto' }}>
+    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', width:'100%', height: 350, mx:'auto' }}>
       <Typography variant="h6" gutterBottom>
         RMS Total Loss % — Last 30 days
       </Typography>
@@ -100,12 +100,7 @@ export default function RMSLossChart() {
             margin={{ top: 30, right: 24, bottom: 30, left: 10 }}
             padding={0.3}
             valueFormat={v => `${Number(v || 0).toFixed(2)}%`}
-            axisBottom={{
-              tickRotation: -45,
-              // removed axis label/legend per request
-              legend: undefined,
-              legendOffset: 0,
-            }}
+            axisBottom={null}
             enableGridX
             enableLabel={false}
             colorBy="indexValue"               // color by each inward (category)

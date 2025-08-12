@@ -84,12 +84,12 @@ export default function ImpuritiesChart({
   const chartHeight = Math.max(160, 40 + rows.length * rowHeight);
 
   return (
-    <Paper sx={{ p: 2, height: { xs: 'auto', sm: 350 }, minWidth: {xs:'100%',sm:350},overflowY: 'auto',backgroundColor: '#f6f8fa' }}>
+    <Paper sx={{ p: 3, bgcolor: '#f6f8fa', width:'100%', height: 300 }}>
       <Typography variant="subtitle1" sx={{ mb: 1, textAlign: 'center' }}>
         Impurities by Inward
       </Typography>
 
-      <Box sx={{ height: 300 }}>
+      <Box sx={{ height: 250 }}>
         <ResponsiveBar
           data={rows}
           keys={KEYS}
@@ -97,13 +97,13 @@ export default function ImpuritiesChart({
           layout="horizontal"
           groupMode="stacked"
           padding={0.2}
-          margin={{ top: 10, right: 12, bottom: 30, left: 40 }}
+          margin={{ top: 10, right: 10, bottom: 30, left: 10 }}
           enableGridX
-          axisLeft={{ tickSize: 3, tickPadding: 4 }}
+          axisLeft={null}
           axisBottom={{
-            tickSize: 3,
-            tickPadding: 4,
-            legend: 'kg',
+            tickSize: 1,
+            tickPadding: 1,
+            legend: '',
             legendOffset: 24,
             legendPosition: 'middle',
           }}

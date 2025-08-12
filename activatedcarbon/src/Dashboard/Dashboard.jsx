@@ -8,6 +8,7 @@ import KilnYieldCharts from './KilnYieldCharts';
 import GCharcoalChartsWrapper from './GcharcoalChart';
 import ImpuritiesChart from './ImpuritiesChart';
 import RMSLossChart from './RMSLossChart';
+import { styled } from '@mui/material/styles';
 const DummyBox = ({ label, color }) => (
   <Paper
     sx={{
@@ -20,9 +21,19 @@ const DummyBox = ({ label, color }) => (
     <Typography>{label}</Typography>
   </Paper>
 );
+const Item = styled(Paper)(({ theme }) => ({
+  backgroundColor: '#f6f8fa',
+  ...theme.typography.body2,
+  padding: theme.spacing(1),
+  textAlign: 'center',
+  color: (theme.vars ?? theme).palette.text.secondary,
+  ...theme.applyStyles('dark', {
+    backgroundColor: '#f6f8fa',
+  }),
+}));
 
 const Dashboard = () => (
-  <Box sx={{ px: 1, pt: 2 ,width: {xs:'100%',sm:1050}}}>
+  <Box sx={{ px: 1, pt: 2 ,width: {xs:'100%',sm:1000}}}>
   <Typography variant="h5" gutterBottom>
     Production & Stock Dashboard
   </Typography>
@@ -32,33 +43,46 @@ const Dashboard = () => (
   {/* Grade + Raw Material Charts */}
   <Grid
     container
-    spacing={2}
-    sx={{ mt: 1 }}
-    columns={12}
+    spacing={3} columnSpacing={3}
   >
-    <Grid item xs={12} sm={4} md= {3} >
-      
-      <RawMaterialStock />
+    <Grid  size={{xs:12,sm:5}}>
+      <RawMaterialStock /> 
     </Grid>
-    <Grid item xs={12} sm={8} md={9} > 
-      <GCharcoalChartsWrapper />
+    <Grid  size={{xs:12,sm:5}}> 
+      <GCharcoalChartsWrapper /> 
     </Grid>
-    <Grid item xs={12} sm={2} md={1} > 
+    <Grid  size={{xs:12,sm:2}}> 
       <GradeWiseStockChart />
     </Grid>
   </Grid>
-  <Box sx={{ mt: 2,mr:1 }}>
+  <Grid
+    container
+    spacing={1}
+    sx={{mt:2}}
+  >
+    <Grid size={12} > 
     <ImpuritiesChart />
-  </Box>
-  {/* Kiln Charts */}
-  <Box sx={{ mt: 2 ,mr:1}}>
+    </Grid>
+    </Grid>
+    <Grid
+      container
+      spacing={1}
+      sx={{mt:2}}
+    >
+    <Grid size={12} > 
     <KilnYieldCharts />
-  </Box>
-
-  {/* GCharcoal Charts */}
-  <Box sx={{ mt: 2 ,mr:1}}>
+    </Grid></Grid>
+    <Grid
+      container
+      spacing={1}
+      sx={{mt:2}}
+    >
+    <Grid size={12} > 
     <RMSLossChart />
-  </Box>
+    </Grid>
+  </Grid>
+  
+
 </Box>
 
 
