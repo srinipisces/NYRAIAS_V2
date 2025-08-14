@@ -191,7 +191,7 @@ router.put('/singleupdate/:bag_no', authenticate, checkAccess('Operations.Stock'
 router.post('/filter_instock', authenticate, async (req, res) => {
   const { accountid } = req.user;
   const { filters = [], page = 0, limit = 50 } = req.body;
-
+  
   const tableConfigs = [
     {
       table: `${accountid}_screening_outward`,
@@ -248,13 +248,13 @@ router.post('/filter_instock', authenticate, async (req, res) => {
         SELECT ${selectClause}
         FROM ${table}
         WHERE ${whereClause}
-        LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+        ORDER BY bag_no
       `;
-
-      const result = await pool.query(query, [...values, limit, page * limit]);
+      
+      const result = await pool.query(query);
       allResults.push(...result.rows);
     }
-
+    
     res.json({ data: allResults, total: allResults.length });
 
   } catch (err) {

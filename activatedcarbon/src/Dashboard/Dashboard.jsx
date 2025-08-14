@@ -49,7 +49,8 @@ const Dashboard = () => (
       sx={{mt:2}}
     >
     <Grid size={12} > 
-    <KilnYieldCharts />
+      <RMSLossChart />
+    
     </Grid></Grid>
     <Grid
       container
@@ -57,7 +58,7 @@ const Dashboard = () => (
       sx={{mt:2}}
     >
     <Grid size={12} > 
-    <RMSLossChart />
+    <KilnYieldCharts />
     </Grid>
   </Grid>
   

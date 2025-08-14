@@ -27,6 +27,8 @@ import DeStoningTab from './DeStoningTab';
 import KlinOutputQualityTab from './KlinOutputQualityTab'
 import DeStoningQuality from './DeStoningQuality';
 import Stock from './Stock';
+import Re_Process from './Re_Process';
+import Re_Process_Quality from './Re_Process_Quality';
 
 // Full list of all operations tabs
 const allTabs = [
@@ -45,6 +47,8 @@ const allTabs = [
   { label: 'De-Stoning Quality', component: <DeStoningQuality /> },
   { label: 'Screening Inward', component: <ScreeningInwTab /> },
   { label: 'Screening Outward', component: <ScreeningOutTab /> },
+  { label: 'Re-Process', component: <Re_Process /> },
+  { label: 'Re-Process Quality', component: <Re_Process_Quality /> },
   { label: 'Stock', component: <Stock /> }
 ];
 

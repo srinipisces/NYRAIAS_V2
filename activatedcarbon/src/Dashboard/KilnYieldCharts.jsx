@@ -91,6 +91,7 @@ export default function KilnYieldCharts() {
           {
             scaleType: 'point',
             data: xData,
+            label:'Last 2 Weeks',
             tickLabelStyle: {
               fontSize: isSmallScreen ? 10 : 12,
               angle: isSmallScreen ? -45 : 0,
@@ -98,8 +99,7 @@ export default function KilnYieldCharts() {
             },
           },
         ]}
-        //yScale={{ type: 'linear', min: 0 ,}} // add max: 100 if yield is % out of 100
-        yAxis={[{label: 'Yield %',min: 0,max:100}]}
+        yAxis={[{label: 'Yield %',min: 0,max:100,labelStyle:{offset:0}}]}
         series={series}
         height={isSmallScreen ? 260 : 300}
         grid={{ vertical: true, horizontal: true }}

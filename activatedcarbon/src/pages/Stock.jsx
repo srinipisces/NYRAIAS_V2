@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import ExpressionSearchBar from './ExpressionSearchBar';
-import StockTable from '../Tables/StockTable';
+import StockTable from '../Tables/StockTable_New';
 import { Snackbar, Alert } from '@mui/material';
 
 const API_URL = import.meta.env.VITE_API_URL;
@@ -76,11 +76,11 @@ export default function Stock() {
   return (
     <>
       <h2>Material in InStock</h2>
-      <ExpressionSearchBar
+      {/* <ExpressionSearchBar
         onSearch={handleSearch}
         onBulkUpdate={handleBulkUpdate}
         loading={loading}
-      />
+      /> */}
       <StockTable
         data={data}
         page={page}
