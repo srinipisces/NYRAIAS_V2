@@ -1,3 +1,4 @@
+// Re_Process.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import {
   Box,
@@ -17,36 +18,56 @@ import {
   useMediaQuery,
   useTheme,
   Switch,
+  Snackbar,
 } from "@mui/material";
 import SearchIcon from "@mui/icons-material/Search";
-import AddIcon from "@mui/icons-material/ArrowForward";
-import DeleteIcon from "@mui/icons-material/Close";
+import ArrowForwardIcon from "@mui/icons-material/ArrowForward";
+import CloseIcon from "@mui/icons-material/Close";
 import PlayArrowIcon from "@mui/icons-material/PlayArrow";
 import DoneAllIcon from "@mui/icons-material/DoneAll";
+import RefreshIcon from "@mui/icons-material/Refresh";
+import LabelOutlinedIcon from "@mui/icons-material/LabelOutlined";
+import axios from "axios";
 
-// --- Mock data (with createdAt for strict sorting) ---
-const SAMPLE_BAGS = [
-  { ds_bag_no: "DSO_300725_001", weight_out: 42.5, datecode: "300725", createdAt: "2025-07-30T10:15:00Z" },
-  { ds_bag_no: "DSO_300725_002", weight_out: 39.8, datecode: "300725", createdAt: "2025-07-30T10:25:00Z" },
-  { ds_bag_no: "DSO_300725_010", weight_out: 41.1, datecode: "300725", createdAt: "2025-07-30T11:05:00Z" },
-  { ds_bag_no: "DSO_310725_004", weight_out: 43.0, datecode: "310725", createdAt: "2025-07-31T09:10:00Z" },
-  { ds_bag_no: "DSO_010825_003", weight_out: 40.2, datecode: "010825", createdAt: "2025-08-01T08:00:00Z" },
-  { ds_bag_no: "DSO_020825_007", weight_out: 44.3, datecode: "020825", createdAt: "2025-08-02T13:30:00Z" },
-];
+/* ------------------ API client (VITE_URL + cookies + error surfacing) ------------------ */
+const API_URL = import.meta.env.VITE_API_URL;
+const api = axios.create({ baseURL: API_URL || "/", withCredentials: true, timeout: 20000 });
+api.interceptors.response.use(
+  (resp) => {
+    const d = resp?.data;
+    if (d && typeof d === "object" && d.success === false) {
+      const err = new Error(d.error || "Request failed");
+      // @ts-ignore
+      err.status = resp.status;
+      // @ts-ignore
+      err.code = d.code;
+      throw err;
+    }
+    return resp;
+  },
+  (error) => {
+    const msg = error?.response?.data?.error || error?.message || "Network error";
+    const err = new Error(msg);
+    // @ts-ignore
+    err.status = error?.response?.status;
+    // @ts-ignore
+    err.code = error?.response?.data?.code;
+    return Promise.reject(err);
+  }
+);
 
-// Tenant settings → output grade options (can be extended)
-const SETTINGS_GRADES = [
-  { grade: "3x4" },
-  { grade: "8x16" },
-  { grade: "4x16" },
-  { grade: "30" },
-  { grade: "4x8" },
-];
-
-// Compact helper
 const paperSx = { p: 2, bgcolor: "#f6f8fa", borderRadius: 3, boxShadow: 1 };
-const PAPER_HEIGHT = 560; // keep all main panels equal height
+const LEFT_WIDTH = 350;
+const RIGHT_WIDTH = 700;
+const PAPER_HEIGHT = 560;
 
+/* ------------------ small utils ------------------ */
+const parseNum = (v) => {
+  const n = typeof v === "number" ? v : parseFloat(v);
+  return Number.isFinite(n) ? n : 0;
+};
+const fmt1 = (v) => (Number.isFinite(v) ? v.toFixed(1) : "0.0");
+const fmt2 = (v) => (Number.isFinite(v) ? v.toFixed(2) : "0.00");
 function ddmmyy(d = new Date()) {
   const dd = String(d.getDate()).padStart(2, "0");
   const mm = String(d.getMonth() + 1).padStart(2, "0");
@@ -58,99 +79,207 @@ export default function Re_Process() {
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down("sm"));
 
-  // Machine/session state
+  /* ------------------ App state ------------------ */
   const [busy, setBusy] = useState(false);
-  const [started, setStarted] = useState(false); // gate for showing the right column
-  const [available, setAvailable] = useState(() =>
-    [...SAMPLE_BAGS].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-  );
-  const [loaderBags, setLoaderBags] = useState([]); // loaded into machine (max 4)
+  const [started, setStarted] = useState(false);
+
+  // Bags from backend route /api/re_process/re_process
+  const [available, setAvailable] = useState([]);
+  const [bagsLoading, setBagsLoading] = useState(true);
+  const [loaderBags, setLoaderBags] = useState([]);
   const [search, setSearch] = useState("");
 
-  // Output settings (persistent)
-  const STORAGE_KEY = "screening_selected_grades";
-  const [gradeOptions] = useState(SETTINGS_GRADES);
-  const [selectedGrades, setSelectedGrades] = useState(SETTINGS_GRADES.map((g) => g.grade));
-  useEffect(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      if (!raw) return;
-      const saved = JSON.parse(raw);
-      if (Array.isArray(saved)) {
-        const valid = saved.filter((g) => gradeOptions.some((o) => o.grade === g));
-        if (valid.length) setSelectedGrades(valid);
-      }
-    } catch {}
-  }, []);
-  useEffect(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(selectedGrades)); } catch {}
-  }, [selectedGrades]);
+  // Output grades from backend
+  const [gradeOptions, setGradeOptions] = useState([]);       // ["3x4","4x16",...]
+  const [selectedGrades, setSelectedGrades] = useState([]);   // -> persisted in Output_Grades_Live
+  const [gradesLoading, setGradesLoading] = useState(true);
+  const [savingLive, setSavingLive] = useState(false);
 
-  // Label management (multiple labels per grade)
-  // each label: { id, labelId: 'REPO_DDMMYY_001', grade, weight }
+  // Error surfaces
+  const [error, setError] = useState("");
+  const [snackOpen, setSnackOpen] = useState(false);
+  const showError = (msg) => {
+    setError(msg || "Something went wrong.");
+    setSnackOpen(true);
+  };
+
+  // Labels (client-side preview)
   const [labels, setLabels] = useState([]);
-  const [labelCounter, setLabelCounter] = useState(1); // increments per created label (mock)
-  const [newLabelWeight, setNewLabelWeight] = useState({}); // per-grade input before creating a label
+  const [labelCounter, setLabelCounter] = useState(1);
+  const [newLabelWeight, setNewLabelWeight] = useState({});
 
-  // Derived
-  const sortAvailable = (list) => [...list].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  /* ------------------ Derived ------------------ */
+  const sortByDateDesc = (list) =>
+    [...list].sort(
+      (a, b) => new Date(b?.screening_out_dt ?? 0) - new Date(a?.screening_out_dt ?? 0)
+    );
 
   const filteredAvailable = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return sortAvailable(
+    return sortByDateDesc(
       available.filter((b) =>
-        !q ? true : b.ds_bag_no.toLowerCase().includes(q) || String(b.weight_out).includes(q)
+        !q ? true : b.bag_no?.toLowerCase().includes(q) || String(b.weight).includes(q)
       )
     );
   }, [search, available]);
 
   const loadedWeight = useMemo(
-    () => loaderBags.reduce((sum, b) => sum + (b.weight_out || 0), 0),
+    () => loaderBags.reduce((sum, b) => sum + parseNum(b?.weight), 0),
     [loaderBags]
   );
 
   const outputsTotal = useMemo(
-    () => labels.reduce((sum, l) => sum + (parseFloat(l.weight) || 0), 0),
+    () => labels.reduce((sum, l) => sum + parseNum(l?.weight), 0),
     [labels]
   );
 
-  const tolerance = 0.2; // kg (kept, but not gating Move to Stock)
+  const tolerance = 0.2;
   const diff = loadedWeight - outputsTotal;
-  const canMoveToStock = started && outputsTotal > 0; // relaxed per your request
+  const canMoveToStock = started && outputsTotal > 0;
 
-  // Actions: Available → Loader (click oval button adds immediately)
+  /* ------------------ Backend helpers ------------------ */
+  // 1) Bags
+  const fetchReprocessBags = async () => {
+    setBagsLoading(true);
+    try {
+      // Your route returns rows: bag_no, weight, screening_out_dt (for Re_Process)
+      const resp = await api.get("/api/re_process/re_process");
+      const rows = Array.isArray(resp.data) ? resp.data : [];
+      setAvailable(rows);
+    } catch (e) {
+      console.error("fetchReprocessBags", e);
+      showError(e?.message || "Failed to load re-process bags.");
+    } finally {
+      setBagsLoading(false);
+    }
+  };
+
+  // 2) Grades (active + live)
+  const fetchActiveGrades = async () => {
+    const resp = await api.get("/api/settings/output-grades", { params: { activeOnly: true } });
+    // resp.data.data is an object of { grade: "Active" }
+    return Object.keys(resp.data?.data || {}).sort();
+  };
+
+  const fetchLiveGrades = async () => {
+    const resp = await api.get("/api/settings/output-grades-live");
+    return Array.isArray(resp.data?.data) ? resp.data.data : [];
+  };
+
+  const saveLiveGrades = async (grades, remarks = "Updated from Screening Loader") => {
+    setSavingLive(true);
+    try {
+      await api.put("/api/settings/output-grades-live", { grades, remarks });
+    } finally {
+      setSavingLive(false);
+    }
+  };
+
+  // Initial load: bags + grades
+  useEffect(() => {
+    fetchReprocessBags();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Load grade options + live selection
+  const loadGradeSettings = async () => {
+    setGradesLoading(true);
+    try {
+      const actives = await fetchActiveGrades();
+      setGradeOptions(actives);
+
+      let live = await fetchLiveGrades();
+      live = live.filter((g) => actives.includes(g)); // keep only grades that are still active
+
+      // First-time (or invalid) -> default to ALL active and persist
+      if ((!live || live.length === 0) && actives.length > 0) {
+        await saveLiveGrades(actives, "Init: default all active");
+        setSelectedGrades(actives);
+      } else {
+        setSelectedGrades(live);
+      }
+    } catch (e) {
+      console.error("loadGradeSettings", e);
+      showError(e?.message || "Failed to load Output Grades.");
+    } finally {
+      setGradesLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadGradeSettings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // If admin later deactivates some grades, shrink selection to active-only
+  useEffect(() => {
+    if (gradesLoading) return;
+    setSelectedGrades((prev) => {
+      const intersect = prev.filter((g) => gradeOptions.includes(g));
+      const next = intersect.length > 0 ? intersect : gradeOptions;
+      if (next.length !== prev.length) {
+        saveLiveGrades(next, "Auto-adjust to active grades");
+      }
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gradeOptions]);
+
+  /* ------------------ Actions ------------------ */
   const addBagToLoader = (bag) => {
-    if (loaderBags.length >= 4) return; // capped at 4
-    setLoaderBags((prev) => (prev.find((x) => x.ds_bag_no === bag.ds_bag_no) ? prev : [...prev, bag]));
-    setAvailable((prev) => sortAvailable(prev.filter((b) => b.ds_bag_no !== bag.ds_bag_no)));
+    if (loaderBags.length >= 4) return;
+    setLoaderBags((prev) => (prev.find((x) => x.bag_no === bag.bag_no) ? prev : [...prev, bag]));
+    setAvailable((prev) => prev.filter((b) => b.bag_no !== bag.bag_no));
   };
 
   const removeFromLoader = (bag) => {
-    setLoaderBags((prev) => prev.filter((b) => b.ds_bag_no !== bag.ds_bag_no));
-    setAvailable((prev) => sortAvailable([bag, ...prev])); // reinsert and keep sorted
+    setLoaderBags((prev) => prev.filter((b) => b.bag_no !== bag.bag_no));
+    setAvailable((prev) => sortByDateDesc([bag, ...prev]));
   };
 
-  const startScreening = () => {
-    if (!loaderBags.length || selectedGrades.length === 0) return; // guard
-    setBusy(true);
-    setStarted(true);
+  const startScreening = async () => {
+    if (!loaderBags.length || selectedGrades.length === 0) return;
+    try {
+      await saveLiveGrades(selectedGrades, "Start pressed");
+      setBusy(true);
+      setStarted(true);
+    } catch (e) {
+      showError(e?.message || "Failed to save selection before Start.");
+    }
   };
 
-  // Grade selection (can change even after start)
-  const toggleGrade = (gname) => {
-    setSelectedGrades((prev) => (prev.includes(gname) ? prev.filter((g) => g !== gname) : [...prev, gname]));
+  const toggleGrade = async (gname) => {
+    const prev = selectedGrades;
+    const next = prev.includes(gname) ? prev.filter((g) => g !== gname) : [...prev, gname];
+    setSelectedGrades(next);
+    try {
+      await saveLiveGrades(next, "Chip toggled");
+    } catch (e) {
+      setSelectedGrades(prev);
+      showError(e?.message || "Failed to update selection.");
+    }
   };
-  const clearGrades = () => setSelectedGrades([]);
 
-  // Labels
+  const clearGrades = async () => {
+    const prev = selectedGrades;
+    setSelectedGrades([]);
+    try {
+      await saveLiveGrades([], "Cleared all");
+    } catch (e) {
+      setSelectedGrades(prev);
+      showError(e?.message || "Failed to clear selection.");
+    }
+  };
+
+  // Labels (icon instead of text button)
   const createLabel = (grade) => {
-    const w = parseFloat(newLabelWeight[grade]);
-    if (!(w > 0)) return; // require weight before creating
+    const w = parseNum(newLabelWeight[grade]);
+    if (!(w > 0)) return;
     const seq = String(labelCounter).padStart(3, "0");
     const labelId = `REPO_${ddmmyy()}_${seq}`;
     setLabelCounter((n) => n + 1);
     setLabels((prev) => [{ id: `${grade}-${labelId}`, labelId, grade, weight: w }, ...prev]);
-    setNewLabelWeight((prev) => ({ ...prev, [grade]: "" })); // clear input for that grade
+    setNewLabelWeight((prev) => ({ ...prev, [grade]: "" }));
   };
   const deleteLabel = (id) => setLabels((prev) => prev.filter((l) => l.id !== id));
 
@@ -160,14 +289,13 @@ export default function Re_Process() {
     setLabels([]);
     setLabelCounter(1);
     setLoaderBags([]);
-    setAvailable(sortAvailable(SAMPLE_BAGS));
     setSearch("");
-    // keep selectedGrades as-is (persisted)
+    // keep selectedGrades as persisted
   };
 
   const moveToStock = () => {
     if (!canMoveToStock) return;
-    // In real app, POST /api/screening/move-to-stock, then reset
+    // TODO: POST /api/session/:id/move-to-stock
     resetAll();
   };
 
@@ -175,17 +303,26 @@ export default function Re_Process() {
     <Box sx={{ p: { xs: 1, md: 2 }, width: "100%" }}>
       {/* Top header */}
       <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ md: "center" }} sx={{ mb: 1 }}>
-        <Typography variant="h6" fontWeight={700}>Screening – Machine SCR‑1</Typography>
+        <Typography variant="h6" fontWeight={700}>Screening – Machine SCR-1</Typography>
         <Box sx={{ flex: 1 }} />
       </Stack>
 
       <Grid container spacing={2} alignItems="stretch">
-        {/* Left: Available Inputs (ALWAYS SORTED by createdAt DESC) */}
+        {/* Left: Available Inputs */}
         <Grid item xs={12} md={4}>
           <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, width: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column" }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-              <Typography variant="subtitle1">Available Input Bags</Typography>
-              <Chip label={`${available.length}`} size="small" />
+              <Stack direction="row" spacing={1} alignItems="center">
+                <Typography variant="subtitle1">Available Input Bags</Typography>
+                <Chip label={`${available.length}`} size="small" />
+              </Stack>
+              <Tooltip title="Refresh list">
+                <span>
+                  <IconButton size="small" onClick={fetchReprocessBags} disabled={bagsLoading}>
+                    <RefreshIcon fontSize="small" />
+                  </IconButton>
+                </span>
+              </Tooltip>
             </Stack>
 
             <TextField
@@ -199,43 +336,53 @@ export default function Re_Process() {
             />
 
             <Box sx={{ flex: 1, minHeight: { xs: 260, md: 300 }, overflowY: "auto", pr: 1 }}>
-              {filteredAvailable.map((bag) => {
-                const maxed = loaderBags.length >= 4;
-                return (
-                  <Paper key={bag.ds_bag_no} sx={{ p: 1, mb: 1, borderRadius: 2, border: "1px solid", borderColor: "divider" }}>
-                    <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                      <Box>
-                        <Typography fontSize={13} fontWeight={600}>{bag.ds_bag_no}</Typography>
-                        <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                          <Chip label={`${bag.weight_out.toFixed(1)} kg`} size="small" variant="outlined" />
+              {bagsLoading ? (
+                <LinearProgress sx={{ mt: 1 }} />
+              ) : (
+                <>
+                  {filteredAvailable.map((bag) => {
+                    const maxed = loaderBags.length >= 4;
+                    const bw = fmt1(parseNum(bag?.weight));
+                    return (
+                      <Paper key={bag.bag_no} sx={{ p: 1, mb: 1, borderRadius: 2, border: "1px solid", borderColor: "divider" }}>
+                        <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                          <Box>
+                            <Typography fontSize={13} fontWeight={600}>{bag.bag_no}</Typography>
+                            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                              <Chip label={`${bw} kg`} size="small" variant="outlined" />
+                              <Chip label={new Date(bag.screening_out_dt).toLocaleString()} size="small" variant="outlined" />
+                            </Stack>
+                          </Box>
+                          <Tooltip title={maxed ? "Max 4 bags can be loaded" : "Load into screening"}>
+                            <span>
+                              <Button
+                                size="small"
+                                variant="contained"
+                                color="warning"
+                                onClick={() => addBagToLoader(bag)}
+                                disabled={busy || maxed}
+                                sx={{ borderRadius: 999, minWidth: 36, width: 36, height: 28, p: 0 }}
+                              >
+                                <ArrowForwardIcon fontSize="small" />
+                              </Button>
+                            </span>
+                          </Tooltip>
                         </Stack>
-                      </Box>
-                      <Tooltip title={maxed ? "Max 4 bags can be loaded" : "Load into screening"}>
-                        <span>
-                          <Button
-                            size="small"
-                            variant="contained"
-                            color="warning"
-                            onClick={() => addBagToLoader(bag)}
-                            disabled={busy || maxed}
-                            sx={{ borderRadius: 999, minWidth: 36, width: 36, height: 28, p: 0 }}
-                          >
-                            <AddIcon fontSize="small" />
-                          </Button>
-                        </span>
-                      </Tooltip>
-                    </Stack>
-                  </Paper>
-                );
-              })}
-              {!filteredAvailable.length && (<Alert severity="info" sx={{ mt: 1 }}>No bags match your search.</Alert>)}
+                      </Paper>
+                    );
+                  })}
+                  {!filteredAvailable.length && !bagsLoading && (
+                    <Alert severity="info" sx={{ mt: 1 }}>No bags match your search.</Alert>
+                  )}
+                </>
+              )}
             </Box>
           </Paper>
         </Grid>
 
-        {/* Center: Loader + Grade Settings (below loader; always visible, fixed width) */}
+        {/* Center: Loader + Output Grades (below) */}
         <Grid item xs={12} md={4}>
-          <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", minWidth: 0, overflowX: "hidden", width: 350, boxSizing: "border-box" }}>
+          <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", minWidth: 0, overflowX: "hidden", width: LEFT_WIDTH, boxSizing: "border-box" }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
               <Typography variant="subtitle1">Screening Loader</Typography>
               <Stack direction="row" spacing={2} alignItems="center">
@@ -255,16 +402,16 @@ export default function Re_Process() {
                 </Alert>
               ) : (
                 loaderBags.map((bag) => (
-                  <Paper key={bag.ds_bag_no} sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                  <Paper key={bag.bag_no} sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Box>
-                        <Typography fontSize={13} fontWeight={700}>{bag.ds_bag_no}</Typography>
+                        <Typography fontSize={13} fontWeight={700}>{bag.bag_no}</Typography>
                         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                          <Chip label={`${bag.weight_out.toFixed(1)} kg`} size="small" variant="outlined" />
+                          <Chip label={`${fmt1(parseNum(bag?.weight))} kg`} size="small" variant="outlined" />
                         </Stack>
                       </Box>
                       <IconButton size="small" onClick={() => removeFromLoader(bag)} disabled={busy}>
-                        <DeleteIcon fontSize="small" />
+                        <CloseIcon fontSize="small" />
                       </IconButton>
                     </Stack>
                   </Paper>
@@ -274,48 +421,63 @@ export default function Re_Process() {
 
             <Divider sx={{ my: 1 }} />
 
-            {/* Output Grades (Settings) below loader; always visible */}
+            {/* Output Grades (active only) */}
             <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
               <Typography variant="subtitle2">Output Grades (Settings)</Typography>
-              <Button size="small" onClick={clearGrades}>Clear</Button>
+              <Button size="small" onClick={clearGrades} disabled={gradesLoading || savingLive}>Clear</Button>
             </Stack>
-            <Box sx={{
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 0.75,
-              width: "100%",
-              maxWidth: "100%",
-              height: { xs: 112, md: 128 },
-              overflowY: "auto",
-              overflowX: "hidden",
-              pr: 1,
-              alignItems: "center",
-            }}>
-              {gradeOptions.map((g) => {
-                const on = selectedGrades.includes(g.grade);
-                return (
-                  <Chip
-                    key={g.grade}
-                    label={g.grade}
-                    size="small"
-                    variant={on ? "filled" : "outlined"}
-                    color={on ? "primary" : "default"}
-                    onClick={() => toggleGrade(g.grade)}
-                    sx={{
-                      borderStyle: on ? "solid" : "dashed",
-                      height: 28,
-                      alignSelf: "center",
-                      maxWidth: "100%",
-                      '& .MuiChip-label': { px: 1, fontSize: 12 }
-                    }}
-                  />
-                );
-              })}
-            </Box>
-            {selectedGrades.length === 0 && (
-              <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                Select at least one output grade to start.
-              </Typography>
+
+            {gradesLoading ? (
+              <Box sx={{ height: 120, display: "flex", alignItems: "center", justifyContent: "center" }}>
+                <LinearProgress sx={{ width: "100%" }} />
+              </Box>
+            ) : (
+              <>
+                {error && (
+                  <Alert severity="error" sx={{ mb: 1 }}>
+                    {error}
+                  </Alert>
+                )}
+                <Box sx={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 0.75,
+                  width: "100%",
+                  maxWidth: "100%",
+                  height: { xs: 112, md: 128 },
+                  overflowY: "auto",
+                  overflowX: "hidden",
+                  pr: 1,
+                  alignItems: "center",
+                }}>
+                  {gradeOptions.map((g) => {
+                    const on = selectedGrades.includes(g);
+                    return (
+                      <Chip
+                        key={g}
+                        label={g}
+                        size="small"
+                        variant={on ? "filled" : "outlined"}
+                        color={on ? "primary" : "default"}
+                        onClick={() => toggleGrade(g)}
+                        disabled={savingLive}
+                        sx={{
+                          borderStyle: on ? "solid" : "dashed",
+                          height: 28,
+                          alignSelf: "center",
+                          maxWidth: "100%",
+                          "& .MuiChip-label": { px: 1, fontSize: 12 },
+                        }}
+                      />
+                    );
+                  })}
+                </Box>
+                {selectedGrades.length === 0 && (
+                  <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
+                    Select at least one output grade to start.
+                  </Typography>
+                )}
+              </>
             )}
 
             <Divider sx={{ my: 1 }} />
@@ -323,13 +485,13 @@ export default function Re_Process() {
             <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mt: "auto" }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography fontSize={13}>Total loaded:</Typography>
-                <Chip label={`${loadedWeight.toFixed(1)} kg`} size="small" color={loadedWeight > 0 ? "primary" : "default"} />
+                <Chip label={`${fmt1(loadedWeight)} kg`} size="small" color={loadedWeight > 0 ? "primary" : "default"} />
               </Stack>
               <Button
                 size="small"
                 variant="contained"
                 startIcon={<PlayArrowIcon />}
-                disabled={busy || loaderBags.length === 0 || selectedGrades.length === 0}
+                disabled={busy || loaderBags.length === 0 || selectedGrades.length === 0 || savingLive}
                 onClick={startScreening}
               >
                 Start
@@ -338,33 +500,31 @@ export default function Re_Process() {
           </Paper>
         </Grid>
 
-        {/* Right: Machine Status & Output (labels on right) - only visible after Start */}
+        {/* Right: Status & Output — only visible after Start */}
         {started && (
           <Grid item xs={12} md={4}>
-            <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", width: 710, boxSizing: "border-box", overflowX: "hidden" }}>
+            <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", width: RIGHT_WIDTH, boxSizing: "border-box", overflowX: "hidden" }}>
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1">Machine Status & Output</Typography>
                 <Chip label={busy ? "BUSY" : "IDLE"} color={busy ? "warning" : "success"} size="small" />
               </Stack>
 
-              {/* TOP summary above the list box */}
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Loaded</Typography>
-                  <Chip size="small" label={`${loadedWeight.toFixed(1)} kg`} />
+                  <Chip size="small" label={`${fmt1(loadedWeight)} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Σ Output</Typography>
-                  <Chip size="small" label={`${outputsTotal.toFixed(1)} kg`} />
+                  <Chip size="small" label={`${fmt1(outputsTotal)} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Δ</Typography>
-                  <Chip size="small" label={`${diff.toFixed(2)} kg`} color={Math.abs(diff) <= tolerance ? "success" : "error"} />
+                  <Chip size="small" label={`${fmt2(diff)} kg`} color={Math.abs(diff) <= tolerance ? "success" : "error"} />
                 </Stack>
               </Stack>
               <LinearProgress variant="determinate" value={Math.min(100, (outputsTotal / (loadedWeight || 1)) * 100)} />
 
-              {/* Two-column: left = grade rows with Create Label; right = list box of labels */}
               <Grid container spacing={1} sx={{ mt: 1, flex: 1, overflow: "hidden" }}>
                 <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
                   <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Grades</Typography>
@@ -372,7 +532,7 @@ export default function Re_Process() {
                     {selectedGrades.length === 0 && <Alert severity="warning" sx={{ mb: 1 }}>Select at least one grade.</Alert>}
                     {selectedGrades.map((g) => {
                       const count = labels.filter((l) => l.grade === g).length;
-                      const weightValid = parseFloat(newLabelWeight[g]) > 0;
+                      const weightValid = parseNum(newLabelWeight[g]) > 0;
                       return (
                         <Paper key={g} sx={{ p: 1, mb: 1, border: "1px dashed", borderColor: "divider", borderRadius: 2 }}>
                           <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
@@ -388,14 +548,22 @@ export default function Re_Process() {
                                 onChange={(e) => setNewLabelWeight((prev) => ({ ...prev, [g]: e.target.value }))}
                                 sx={{
                                   width: 65,
-                                  '& .MuiOutlinedInput-input': { padding: '2px 6px', fontSize: 12 },
-                                  '& .MuiOutlinedInput-root': { height: 28 },
+                                  "& .MuiOutlinedInput-input": { padding: "2px 6px", fontSize: 12 },
+                                  "& .MuiOutlinedInput-root": { height: 28 },
                                 }}
                               />
                               <Typography fontSize={12} color="text.secondary">kg</Typography>
-                              <Button size="small" variant="outlined" onClick={() => createLabel(g)} disabled={!busy || !weightValid}>
-                                Create label
-                              </Button>
+                              <Tooltip title="Create label">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    onClick={() => createLabel(g)}
+                                    disabled={!busy || !weightValid}
+                                  >
+                                    <LabelOutlinedIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
                             </Stack>
                           </Stack>
                         </Paper>
@@ -409,7 +577,7 @@ export default function Re_Process() {
                   <Box sx={{ overflowY: "auto", overflowX: "hidden", pr: 1, flex: 1, width: "100%", scrollbarGutter: "stable" }}>
                     {labels.length === 0 ? (
                       <Alert severity="info" sx={{ width: "100%", boxSizing: "border-box", whiteSpace: "normal", wordBreak: "break-word" }}>
-                        No labels yet. Enter a weight and press "Create label".
+                        No labels yet. Enter a weight and press the label icon.
                       </Alert>
                     ) : (
                       labels.map((l) => (
@@ -418,10 +586,10 @@ export default function Re_Process() {
                             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                               <Chip size="small" label={l.labelId} />
                               <Chip size="small" variant="outlined" label={l.grade} />
-                              <Chip size="small" label={`${(parseFloat(l.weight) || 0).toFixed(1)} kg`} />
+                              <Chip size="small" label={`${fmt1(parseNum(l.weight))} kg`} />
                             </Stack>
                             <IconButton size="small" onClick={() => deleteLabel(l.id)}>
-                              <DeleteIcon fontSize="small" />
+                              <CloseIcon fontSize="small" />
                             </IconButton>
                           </Stack>
                         </Paper>
@@ -441,6 +609,18 @@ export default function Re_Process() {
           </Grid>
         )}
       </Grid>
+
+      {/* Floating snackbar for any backend error */}
+      <Snackbar
+        open={snackOpen}
+        autoHideDuration={5000}
+        onClose={() => setSnackOpen(false)}
+        anchorOrigin={{ vertical: "top", horizontal: "right" }}
+      >
+        <Alert onClose={() => setSnackOpen(false)} severity="error" variant="filled" sx={{ width: "100%" }}>
+          {error || "Error"}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

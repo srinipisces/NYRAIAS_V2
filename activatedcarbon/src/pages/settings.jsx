@@ -15,11 +15,12 @@ import {
 import UserManagement from '../Components/UserManagement';
 import SupplierManagement from '../Components/SupplierManagement';
 import DropdownSettingsManager from '../Components/Dropdownsettings';
+import OutputGradesManager from '../Components/GradeSettings';
 
 const tabs = [
   { label: 'User Management', component: <UserManagement /> },
   { label: 'Add Suppliers', component: <SupplierManagement /> },
-  { label: 'Grade Management', component: <DropdownSettingsManager /> },
+  { label: 'Grade Management', component: <OutputGradesManager /> },
 ];
 
 export default function SettingsPage() {

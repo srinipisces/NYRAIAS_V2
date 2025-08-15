@@ -1100,3 +1100,45 @@ WHERE LOWER(r.material_outward_status) = 'completed'
   AND r.material_outward_status_upddt IS NOT NULL;
 
 
+
+-- Replace {accountid} with your tenant id (e.g., samcarbons_settings)
+CREATE TABLE IF NOT EXISTS nyra_settings (
+  settings JSONB NOT NULL,
+  -- ensure top-level is an object
+  CONSTRAINT settings_is_object CHECK (jsonb_typeof(settings) = 'object')
+);
+
+-- Enforce exactly one row without adding a key column
+-- (unique expression index makes a 2nd row impossible)
+CREATE UNIQUE INDEX IF NOT EXISTS nyra_settings_one_row
+ON nyra_settings ((true));
+
+
+
+CREATE SEQUENCE IF NOT EXISTS testbed_repro_lot_seq
+    START WITH 1000  
+    INCREMENT BY 1
+    MINVALUE 1000
+    MAXVALUE 1999
+    CACHE 1;
+drop table testbed_re_process;
+create table testbed_re_process(
+  lot_id TEXT PRIMARY KEY DEFAULT ('L-' || nextval('samcarbons_repro_lot_seq')::text),
+  loaded_dttm timestamp default CURRENT_TIMESTAMP,
+  loaded_bags jsonb,
+  loaded_weight numeric,
+  bags_loaded_userid text,
+  total_out_weight numeric,
+  bags_out_datetime timestamp,
+  bags_out_userid text
+);
+
+reate table testbed_re_process_out(
+  lot_id TEXT,
+  bag_no text,
+  bag_no_created_dttm  timestamp,
+  stock_status text,
+  bag_created_userid text
+);
+
+
