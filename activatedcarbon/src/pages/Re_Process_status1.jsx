@@ -108,10 +108,6 @@ export default function Re_Process() {
   const [labels, setLabels] = useState([]);
   const [labelCounter, setLabelCounter] = useState(1);
   const [newLabelWeight, setNewLabelWeight] = useState({});
-  const [serverOutBags, setServerOutBags] = useState([]);
-  const [serverOutSummary, setServerOutSummary] = useState([]);
-  const [lot, setLot] = useState(null);
-  const [outSaving, setOutSaving] = useState(false);
 
   /* ------------------ Derived ------------------ */
   const sortByDateDesc = (list) =>
@@ -128,26 +124,9 @@ export default function Re_Process() {
 
   const outputsTotal = useMemo(() => labels.reduce((sum, l) => sum + parseNum(l?.weight), 0), [labels]);
 
-  const localSummary = useMemo(() => {
-    const m = new Map();
-    for (const l of labels) {
-      const g = l.grade || "—";
-      const v = m.get(g) || { count: 0, total_weight: 0 };
-      v.count += 1;
-      v.total_weight += parseNum(l.weight);
-      m.set(g, v);
-    }
-    return Array.from(m, ([grade, v]) => ({ grade, ...v }));
-  }, [labels]);
-
-  const displaySummary = busy ? serverOutSummary : localSummary;
-  const displayBags = busy
-    ? serverOutBags
-    : labels.map(l => ({ bag_no: l.labelId, bag_weight: parseNum(l.weight), grade: l.grade, bag_no_created_dttm: null }));
-
   const tolerance = 0.2;
   const diff = loadedWeight - outputsTotal;
-  const canMoveToStock = started && (busy ? serverOutBags.length > 0 : outputsTotal > 0);
+  const canMoveToStock = started && outputsTotal > 0;
 
   /* ------------------ Backend helpers ------------------ */
   // 1) Bags (eligible for loader when idle)
@@ -192,7 +171,6 @@ export default function Re_Process() {
     try {
       const { data } = await api.get("/api/re_process/status");
       if (data?.busy) {
-        setLot(data.lot || null);
         // Machine BUSY → hydrate loader (read-only) from status
         setBusy(true);
         setStarted(true);
@@ -203,18 +181,11 @@ export default function Re_Process() {
         }));
         setLoaderBags(loaded);
         setAvailable([]); // lock Available panel
-        setServerOutBags(Array.isArray(data?.out_bags) ? data.out_bags : []);
-        setServerOutSummary(Array.isArray(data?.out_summary) ? data.out_summary : []);
       } else {
         // Machine IDLE → normal flow
         setBusy(false);
         setStarted(false);
-        setLot(null);
-        
-        
-        setServerOutBags([]);
-        setServerOutSummary([]);
-await fetchReprocessBags();
+        await fetchReprocessBags();
       }
     } catch (e) {
       console.error("status", e);
@@ -330,50 +301,10 @@ await fetchReprocessBags();
   };
   const deleteLabel = (id) => setLabels((prev) => prev.filter((l) => l.id !== id));
 
-  
-  const handleAddOut = async (grade) => {
-    if (!lot?.lot_id) return;
-    const w = Number(newLabelWeight[grade]);
-    if (!Number.isFinite(w) || w <= 0) return;
-    setOutSaving(true);
-    try {
-      await api.post('/api/re_process/out/add', {
-        lot_id: lot.lot_id,
-        grade,
-        bag_weight: w,
-      });
-      setNewLabelWeight((prev) => ({ ...prev, [grade]: '' }));
-      await fetchStatus();
-    } catch (e) {
-      console.error(e);
-      showError(e?.message || 'Failed to add output bag.');
-    } finally {
-      setOutSaving(false);
-    }
-  };
-
-  const handleDeleteOut = async (bag_no) => {
-    if (!lot?.lot_id || !bag_no) return;
-    setOutSaving(true);
-    try {
-      await api.delete(`/api/re_process/out/${encodeURIComponent(lot.lot_id)}/${encodeURIComponent(bag_no)}`);
-      await fetchStatus();
-    } catch (e) {
-      console.error(e);
-      showError(e?.message || 'Failed to delete output bag.');
-    } finally {
-      setOutSaving(false);
-    }
-  };
-const resetAll = () => {
+  const resetAll = () => {
     setBusy(false);
     setStarted(false);
-        setLot(null);
-        
-    
-        setServerOutBags([]);
-        setServerOutSummary([]);
-setLabels([]);
+    setLabels([]);
     setLabelCounter(1);
     setLoaderBags([]);
     setSearch("");
@@ -595,233 +526,100 @@ setLabels([]);
         {started && (
           <Grid item xs={12} md={4}>
             <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", width: RIGHT_WIDTH, boxSizing: "border-box", overflowX: "hidden" }}>
-              {/* Header */}
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1">Machine Status & Output</Typography>
                 <Chip label={busy ? "BUSY" : "IDLE"} color={busy ? "warning" : "success"} size="small" />
               </Stack>
 
-              {/* Totals */}
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Loaded</Typography>
-                  <Chip size="small" label={`${fmt1(parseNum(loadedWeight))} kg`} />
+                  <Chip size="small" label={`${fmt1(loadedWeight)} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Σ Output</Typography>
-                  <Chip size="small" label={`${fmt1(parseNum(outputsTotal))} kg`} />
+                  <Chip size="small" label={`${fmt1(outputsTotal)} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography fontSize={13}>Δ</Typography>
-                  <Chip
-                    size="small"
-                    label={`${fmt2(loadedWeight - outputsTotal)} kg`}
-                    color={Math.abs((loadedWeight - outputsTotal)) <= tolerance ? "success" : "error"}
-                  />
+                  <Chip size="small" label={`${fmt2(diff)} kg`} color={Math.abs(diff) <= tolerance ? "success" : "error"} />
                 </Stack>
               </Stack>
-
               <LinearProgress variant="determinate" value={Math.min(100, (outputsTotal / (loadedWeight || 1)) * 100)} />
 
-              {/* Two columns */}
               <Grid container spacing={1} sx={{ mt: 1, flex: 1, overflow: "hidden" }}>
-                {/* LEFT COLUMN: Per-grade / Grade chips */}
                 <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
-                  {busy ? (
-                    <>
-                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Output Grades</Typography>
-                      <Box sx={{ overflowY: "auto", pr: 1 }}>
-                        {selectedGrades.length === 0 && (
-                          <Alert severity="warning" sx={{ mb: 1 }}>Select at least one grade.</Alert>
-                        )}
-                        {selectedGrades.map((g) => {
-                          const count = serverOutBags.filter((r) => r.grade === g).length;
-                          const weightValid = Number.isFinite(Number(newLabelWeight[g])) && Number(newLabelWeight[g]) > 0;
-                          return (
-                            <Paper key={g} sx={{ p: 1, mb: 1, border: "1px dashed", borderColor: "divider", borderRadius: 2 }}>
-                              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                                <Typography fontSize={13}>{g}</Typography>
-                                <Stack direction="row" spacing={1} alignItems="center">
-                                  <Chip size="small" label={`${count} labels`} />
-                                  <TextField
-                                    size="small"
-                                    type="number"
-                                    inputProps={{ min: 0, step: 0.1 }}
-                                    placeholder="wt"
-                                    value={newLabelWeight[g] || ""}
-                                    onChange={(e) => setNewLabelWeight((prev) => ({ ...prev, [g]: e.target.value }))}
-                                    sx={{
-                                      width: 65,
-                                      "& .MuiOutlinedInput-input": { padding: "2px 6px", fontSize: 12 },
-                                      "& .MuiOutlinedInput-root": { height: 28 },
-                                    }}
-                                    disabled={outSaving}
-                                  />
-                                  <Typography fontSize={12} color="text.secondary">kg</Typography>
-                                  <Tooltip title="Create label">
-                                    <span>
-                                      <IconButton
-                                            size="small"
-                                            onClick={() => handleAddOut(g)}
-                                            disabled={!weightValid || outSaving}
-                                            color="warning"
-                                            sx={{
-                                              width: 48,
-                                              height: 28,
-                                              p: 0,
-                                              borderRadius: 999,         // pill/oval
-                                              bgcolor: 'warning.main',   // fill
-                                              color: 'warning.contrastText',
-                                              boxShadow: 1,
-                                              '&:hover': { bgcolor: 'warning.dark' },
-                                              '&.Mui-disabled': {
-                                                bgcolor: 'action.disabledBackground',
-                                                color: 'action.disabled',
-                                                boxShadow: 'none',
-                                              },
-                                            }}
-                                          >
-                                          <LabelOutlinedIcon sx={{ fontSize: 16, transform: 'rotate(-45deg)' }} />
-                                        </IconButton>
-
-                                    </span>
-                                  </Tooltip>
-                                </Stack>
-                              </Stack>
-                            </Paper>
-                          );
-                        })}
-                      </Box>
-                    </>
-                  ) : (
-                    <>
-                      {/* IDLE: keep your existing grade chips UI */}
-                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Output Grades (Settings)</Typography>
-                      <Box
-                        sx={{
-                          display: "flex",
-                          flexWrap: "wrap",
-                          gap: 0.75,
-                          width: "100%",
-                          maxWidth: "100%",
-                          height: { xs: 112, md: 128 },
-                          overflowY: "auto",
-                          overflowX: "hidden",
-                          pr: 1,
-                          alignItems: "center",
-                        }}
-                      >
-                        {gradeOptions.map((g) => {
-                          const on = selectedGrades.includes(g);
-                          return (
-                            <Chip
-                              key={g}
-                              label={g}
-                              size="small"
-                              variant={on ? "filled" : "outlined"}
-                              color={on ? "primary" : "default"}
-                              onClick={() => toggleGrade(g)}
-                              disabled={savingLive}
-                              sx={{
-                                borderStyle: on ? "solid" : "dashed",
-                                height: 28,
-                                alignSelf: "center",
-                                maxWidth: "100%",
-                                "& .MuiChip-label": { px: 1, fontSize: 12 },
-                              }}
-                            />
-                          );
-                        })}
-                      </Box>
-                      {selectedGrades.length === 0 && (
-                        <Typography variant="caption" color="error" sx={{ mt: 0.5 }}>
-                          Select at least one output grade to start.
-                        </Typography>
-                      )}
-                    </>
-                  )}
+                  <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Grades</Typography>
+                  <Box sx={{ overflowY: "auto", pr: 1 }}>
+                    {selectedGrades.length === 0 && <Alert severity="warning" sx={{ mb: 1 }}>Select at least one grade.</Alert>}
+                    {selectedGrades.map((g) => {
+                      const count = labels.filter((l) => l.grade === g).length;
+                      const weightValid = parseNum(newLabelWeight[g]) > 0;
+                      return (
+                        <Paper key={g} sx={{ p: 1, mb: 1, border: "1px dashed", borderColor: "divider", borderRadius: 2 }}>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Typography fontSize={13}>{g}</Typography>
+                            <Stack direction="row" spacing={1} alignItems="center">
+                              <Chip size="small" label={`${count} labels`} />
+                              <TextField
+                                size="small"
+                                type="number"
+                                inputProps={{ min: 0, step: 0.1 }}
+                                placeholder="wt"
+                                value={newLabelWeight[g] || ""}
+                                onChange={(e) => setNewLabelWeight((prev) => ({ ...prev, [g]: e.target.value }))}
+                                sx={{
+                                  width: 65,
+                                  "& .MuiOutlinedInput-input": { padding: "2px 6px", fontSize: 12 },
+                                  "& .MuiOutlinedInput-root": { height: 28 },
+                                }}
+                              />
+                              <Typography fontSize={12} color="text.secondary">kg</Typography>
+                              <Tooltip title="Create label">
+                                <span>
+                                  <IconButton size="small" onClick={() => createLabel(g)} disabled={!busy || !weightValid}>
+                                    <LabelOutlinedIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Stack>
+                          </Stack>
+                        </Paper>
+                      );
+                    })}
+                  </Box>
                 </Grid>
 
-                {/* RIGHT COLUMN: Output list / Labels list */}
                 <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
-                  {busy ? (
-                    <>
-                      <Typography variant="subtitle2">Output Bags</Typography>
-                      <Box sx={{ overflowY: "auto", overflowX: "hidden", pr: 1, flex: 1, width: "100%", scrollbarGutter: "stable" }}>
-                        {Array.isArray(serverOutBags) && serverOutBags.length > 0 ? (
-                          serverOutBags.map((r, i) => (
-                            <Paper
-                              key={`${r.bag_no}-${i}`}
-                              sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}
-                            >
-                              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                                  <Chip size="small" label={r.bag_no} />
-                                  <Chip size="small" variant="outlined" label={r.grade || "—"} />
-                                  <Chip size="small" label={`${fmt1(parseNum(r.bag_weight))} kg`} />
-                                  
-                                </Stack>
-                              
-                                <IconButton
-                                  size="small"
-                                  color="error"
-                                  onClick={() => handleDeleteOut(r.bag_no)}
-                                  disabled={outSaving}
-                                >
-                                  <CloseIcon fontSize="small" />
-                                </IconButton>
-                              </Stack>
-                            </Paper>
-                          ))
-                        ) : (
-                          <Alert severity="info">No output yet.</Alert>
-                        )}
-                      </Box>
-                    </>
-                  ) : (
-                    <>
-                      {/* IDLE: your existing label list UI */}
-                      <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Labels (right list)</Typography>
-                      <Box sx={{ overflowY: "auto", overflowX: "hidden", pr: 1, flex: 1, width: "100%", scrollbarGutter: "stable" }}>
-                        {labels.length === 0 ? (
-                          <Alert
-                            severity="info"
-                            sx={{ width: "100%", boxSizing: "border-box", whiteSpace: "normal", wordBreak: "break-word" }}
-                          >
-                            No labels yet. Enter a weight and press the label icon.
-                          </Alert>
-                        ) : (
-                          labels.map((l) => (
-                            <Paper key={l.id} sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
-                              <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
-                                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
-                                  <Chip size="small" label={l.labelId} />
-                                  <Chip size="small" variant="outlined" label={l.grade} />
-                                  <Chip size="small" label={`${fmt1(parseNum(l.weight))} kg`} />
-                                </Stack>
-                                <IconButton size="small" onClick={() => deleteLabel(l.id)}>
-                                  <CloseIcon fontSize="small" />
-                                </IconButton>
-                              </Stack>
-                            </Paper>
-                          ))
-                        )}
-                      </Box>
-                    </>
-                  )}
+                  <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Labels (right list)</Typography>
+                  <Box sx={{ overflowY: "auto", overflowX: "hidden", pr: 1, flex: 1, width: "100%", scrollbarGutter: "stable" }}>
+                    {labels.length === 0 ? (
+                      <Alert severity="info" sx={{ width: "100%", boxSizing: "border-box", whiteSpace: "normal", wordBreak: "break-word" }}>
+                        No labels yet. Enter a weight and press the label icon.
+                      </Alert>
+                    ) : (
+                      labels.map((l) => (
+                        <Paper key={l.id} sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
+                          <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
+                            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+                              <Chip size="small" label={l.labelId} />
+                              <Chip size="small" variant="outlined" label={l.grade} />
+                              <Chip size="small" label={`${fmt1(parseNum(l.weight))} kg`} />
+                            </Stack>
+                            <IconButton size="small" onClick={() => deleteLabel(l.id)}>
+                              <CloseIcon fontSize="small" />
+                            </IconButton>
+                          </Stack>
+                        </Paper>
+                      ))
+                    )}
+                  </Box>
                 </Grid>
               </Grid>
 
               <Divider sx={{ my: 1 }} />
               <Stack direction="row" spacing={1}>
-                <Button
-                  size="small"
-                  variant="contained"
-                  color="success"
-                  startIcon={<DoneAllIcon />}
-                  disabled={!canMoveToStock}
-                  onClick={moveToStock}
-                >
+                <Button size="small" variant="contained" color="success" startIcon={<DoneAllIcon />} disabled={!canMoveToStock} onClick={moveToStock}>
                   Move to Stock
                 </Button>
               </Stack>
