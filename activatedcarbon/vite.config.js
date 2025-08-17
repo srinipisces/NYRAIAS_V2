@@ -11,7 +11,7 @@ export default defineConfig({
     hmr: {
         protocol: 'ws',
         clientPort: 80,
-        host: '10.0.0.211',
+        host: '10.0.0.95',
         path: '/activatedcarbon/'
       },
   },

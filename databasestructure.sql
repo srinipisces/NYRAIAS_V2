@@ -1136,9 +1136,93 @@ create table testbed_re_process(
 reate table testbed_re_process_out(
   lot_id TEXT,
   bag_no text,
+  bag_weight numeric,
+  grade text,
   bag_no_created_dttm  timestamp,
   stock_status text,
-  bag_created_userid text
+  bag_created_userid text,
+  stock_change_userid text
 );
+
+-- BAG NO FORMAT (examples):
+--  Repro_R_170825_001   -- grade 6x12
+--  Repro_P_170825_002   -- grade 12x30
+--  Repro_L_170825_003   -- grade 8x16
+--  Repro_S_170825_004   -- grade 8x30
+--  Repro_V_170825_005   -- grade -30
+--  Repro_M_170825_006   -- grade 30x60
+--  Repro_170825_007     -- any other/unknown grade (no letter)
+
+-- 1) Trigger function
+CREATE OR REPLACE FUNCTION trg_set_bag_no_per_samcarbons_re_process_out()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  date_str     TEXT;
+  letter       TEXT;
+  prefix       TEXT;
+  last_counter INTEGER;
+  ts           TIMESTAMP;
+BEGIN
+  -- Do nothing if caller already supplied a bag_no
+  IF NEW.bag_no IS NOT NULL THEN
+    RETURN NEW;
+  END IF;
+
+  -- Use the row's timestamp if present, else now()
+  ts := COALESCE(NEW.bag_no_created_dttm, NOW());
+  date_str := TO_CHAR(ts, 'DDMMYY');
+
+  -- Map grades to letter code (same mapping you use in screening)
+  CASE TRIM(NEW.grade)
+    WHEN '6x12'  THEN letter := 'R';
+    WHEN '12x30' THEN letter := 'P';
+    WHEN '8x16'  THEN letter := 'L';
+    WHEN '8x30'  THEN letter := 'S';
+    WHEN '-30'   THEN letter := 'V';
+    WHEN '30x60' THEN letter := 'M';
+    ELSE letter := NULL;
+  END CASE;
+
+  IF letter IS NULL THEN
+    prefix := 'RPR_' || date_str || '_';
+  ELSE
+    prefix := 'RPR_' || letter || '_' || date_str || '_';
+  END IF;
+
+  -- Global lock so concurrent inserts don’t collide
+  PERFORM pg_advisory_xact_lock(hashtext('samcarbons_re_process_out_counter'));
+
+  -- Get the last used 3-digit suffix anywhere in this table
+  SELECT MAX(CAST(SUBSTRING(bag_no FROM '[0-9]{3}$') AS INTEGER))
+    INTO last_counter
+    FROM samcarbons_re_process_out
+   WHERE bag_no ~ ('^RPR(_[RPLSVM])?_[0-9]{6}_[0-9]{3}$');
+
+  IF last_counter IS NULL OR last_counter >= 999 THEN
+    last_counter := 0;
+  END IF;
+
+  last_counter := last_counter + 1;
+
+  NEW.bag_no := prefix || LPAD(last_counter::TEXT, 3, '0');
+  RETURN NEW;
+END;
+$$;
+
+-- 2) Attach trigger
+DROP TRIGGER IF EXISTS trg_generate_bag_no_samcarbons_re_process_out ON samcarbons_re_process_out;
+CREATE TRIGGER trg_generate_bag_no_samcarbons_re_process_out
+BEFORE INSERT ON samcarbons_re_process_out
+FOR EACH ROW
+EXECUTE FUNCTION trg_set_bag_no_per_samcarbons_re_process_out();
+
+ALTER TABLE samcarbons_re_process_out
+  ADD CONSTRAINT uq_samcarbons_re_process_out_bag_no UNIQUE (bag_no);
+
+CREATE INDEX IF NOT EXISTS idx_samcarbons_re_process_out_bag_no
+  ON samcarbons_re_process_out (bag_no);
+
 
 

@@ -32,7 +32,6 @@ import axios from "axios";
 /* ------------------ API client (VITE_URL + cookies + error surfacing) ------------------ */
 const API_URL = import.meta.env.VITE_API_URL;
 const api = axios.create({ baseURL: API_URL || "/", withCredentials: true, timeout: 20000 });
-const LOAD_BAGS_URL = '/api/re_process/load_bags';
 const CREATE_LABEL_URL = '/api/re_process/createlabel';
 const DELETE_BAG_URL = '/api/re_process/delete_bag';
 const MOVE_TO_STOCK_URL = '/api/re_process/move_to_stock';
@@ -117,7 +116,6 @@ export default function Re_Process() {
   const [newLabelWeight, setNewLabelWeight] = useState({});
   const [serverOutBags, setServerOutBags] = useState([]);
   const [serverOutSummary, setServerOutSummary] = useState([]);
-const [starting, setStarting] = useState(false);
   const [lot, setLot] = useState(null);
   const [outSaving, setOutSaving] = useState(false);
 
@@ -141,7 +139,10 @@ const [starting, setStarting] = useState(false);
   );
 
   // ✅ unified total that switches source based on busy flag
-  const outputsTotal = useMemo(() => (busy ? (Array.isArray(serverOutBags) ? serverOutBags.reduce((s,b)=> s + parseNum(b?.bag_weight), 0) : 0) : labels.reduce((sum,l)=>sum + parseNum(l?.weight),0)), [busy, serverOutBags, labels]);
+  const outputsTotal = useMemo(
+    () => (busy ? outputsTotalBusy : labels.reduce((sum, l) => sum + parseNum(l?.weight), 0)),
+    [busy, outputsTotalBusy, labels]
+  );
 
 
   const localSummary = useMemo(() => {
@@ -183,41 +184,27 @@ const [starting, setStarting] = useState(false);
   };
 
   // 2) Grades (active + live)
+  // before starting a grades fetch/save
+    setGradesError('');
+
   const fetchActiveGrades = async () => {
-  try {
     const resp = await api.get("/api/settings/output-grades", { params: { activeOnly: true } });
     return Object.keys(resp.data?.data || {}).sort();
-  } catch (e) {
-    console.error("fetchActiveGrades", e);
-    setGradesError(e?.response?.data?.error || e?.message || "Failed to load active output grades.");
-    return [];
-  }
-};
+  };
 
   const fetchLiveGrades = async () => {
-  try {
     const resp = await api.get("/api/settings/output-grades-live");
     return Array.isArray(resp.data?.data) ? resp.data.data : [];
-  } catch (e) {
-    console.error("fetchLiveGrades", e);
-    setGradesError(e?.response?.data?.error || e?.message || "Failed to load current output grades.");
-    return [];
-  }
-};
+  };
 
   const saveLiveGrades = async (grades, remarks = "Updated from Screening Loader") => {
-  setGradesError('');
-  setSavingLive(true);
-  try {
-    await api.put("/api/settings/output-grades-live", { grades, remarks });
-  } catch (e) {
-    console.error("saveLiveGrades", e);
-    setGradesError(e?.response?.data?.error || e?.message || "Failed to save output grades.");
-    throw e;
-  } finally {
-    setSavingLive(false);
-  }
-};
+    setSavingLive(true);
+    try {
+      await api.put("/api/settings/output-grades-live", { grades, remarks });
+    } finally {
+      setSavingLive(false);
+    }
+  };
 
   // 3) Status-first bootstrap (NEW)
   const fetchStatus = async () => {
@@ -225,7 +212,6 @@ const [starting, setStarting] = useState(false);
     try {
       const { data } = await api.get("/api/re_process/status");
       if (data?.busy) {
-        setLot(data.lot || null);
         setLot(data.lot || null);
         // Machine BUSY → hydrate loader (read-only) from status
         setBusy(true);
@@ -244,12 +230,11 @@ const [starting, setStarting] = useState(false);
         setBusy(false);
         setStarted(false);
         setLot(null);
-        setLot(null);
         
         
         setServerOutBags([]);
         setServerOutSummary([]);
-await fetchReprocessBags();
+        await fetchReprocessBags();
       }
     } catch (e) {
       console.error("status", e);
@@ -267,22 +252,27 @@ await fetchReprocessBags();
 
   // Load grade settings (unchanged)
   const loadGradeSettings = async () => {
-  setGradesError('');
-  setGradesLoading(true);
-  try {
-    const [actives, liveRaw] = await Promise.all([fetchActiveGrades(), fetchLiveGrades()]);
-    setGradeOptions(actives);
-    const live = (liveRaw || []).filter((g) => actives.includes(g));
-    if ((!live || live.length === 0) && actives.length > 0) {
-      await saveLiveGrades(actives, "Init: default all active");
-      setSelectedGrades(actives);
-    } else {
-      setSelectedGrades(live);
+    setGradesLoading(true);
+    try {
+      const actives = await fetchActiveGrades();
+      setGradeOptions(actives);
+
+      let live = await fetchLiveGrades();
+      live = live.filter((g) => actives.includes(g));
+
+      if ((!live || live.length === 0) && actives.length > 0) {
+        await saveLiveGrades(actives, "Init: default all active");
+        setSelectedGrades(actives);
+      } else {
+        setSelectedGrades(live);
+      }
+    } catch (e) {
+      console.error("loadGradeSettings", e);
+      showError(e?.message || "Failed to load Output Grades.");
+    } finally {
+      setGradesLoading(false);
     }
-  } finally {
-    setGradesLoading(false);
-  }
-};
+  };
 
   useEffect(() => {
     loadGradeSettings();
@@ -314,35 +304,16 @@ await fetchReprocessBags();
     setAvailable((prev) => sortByDateDesc([bag, ...prev]));
   };
 
-  
-const startScreening = async () => {
-  if (!loaderBags.length || selectedGrades.length === 0) return;
-  try {
-    await saveLiveGrades(selectedGrades, "Start pressed");
-  } catch (e) {
-    return showError(e?.message || "Failed to save selection before Start.");
-  }
-  setStarting(true);
-  try {
-    const bagsPayload = loaderBags.map(({ bag_no, weight }) => ({ bag_no, weight }));
-    const resp = await api.post(LOAD_BAGS_URL, { bags: bagsPayload });
-    const lotResp = resp?.data?.lot || null;
-    if (!lotResp?.lot_id) throw new Error("Start failed: lot_id missing in response.");
-    setLot(lotResp);
-    setBusy(true);
-    setStarted(true);
-    setAvailable([]);
-    setLabels([]);
-    setServerOutBags([]);
-    setServerOutSummary([]);
-  } catch (e) {
-    console.error("startScreening/load_bags", e);
-    showError(e?.message || "Failed to start re-process.");
-  } finally {
-    setStarting(false);
-  }
-};
-
+  const startScreening = async () => {
+    if (!loaderBags.length || selectedGrades.length === 0) return;
+    try {
+      await saveLiveGrades(selectedGrades, "Start pressed");
+      setBusy(true);
+      setStarted(true);
+    } catch (e) {
+      showError(e?.message || "Failed to save selection before Start.");
+    }
+  };
 
   const toggleGrade = async (gname) => {
     const prev = selectedGrades;
@@ -380,45 +351,44 @@ const startScreening = async () => {
   const deleteLabel = (id) => setLabels((prev) => prev.filter((l) => l.id !== id));
 
   
-  
-const handleAddOut = async (grade) => {
-  if (!lot?.lot_id) return;
-  const w = Number(newLabelWeight[grade]);
-  if (!Number.isFinite(w) || w <= 0) return;
-  setOutSaving(true);
-  try {
-    await api.post(CREATE_LABEL_URL, { lot_id: lot.lot_id, grade, bag_weight: w });
-    setNewLabelWeight((prev) => ({ ...prev, [grade]: '' }));
-    await fetchStatus();
-  } catch (e) {
-    console.error(e);
-    showError(e?.message || 'Failed to create output label.');
-  } finally {
-    setOutSaving(false);
-  }
-};
+  const handleAddOut = async (grade) => {
+    if (!lot?.lot_id) return;
+    const w = Number(newLabelWeight[grade]);
+    if (!Number.isFinite(w) || w <= 0) return;
+    setOutSaving(true);
+    try {
+      await api.post(CREATE_LABEL_URL, {
+        lot_id: lot.lot_id,
+        grade,
+        bag_weight: w,
+      });
+      setNewLabelWeight((prev) => ({ ...prev, [grade]: '' }));
+      await fetchStatus();
+    } catch (e) {
+      console.error(e);
+      showError(e?.message || 'Failed to add output bag.');
+    } finally {
+      setOutSaving(false);
+    }
+  };
 
-
-  
-const handleDeleteOut = async (bag_no) => {
-  if (!bag_no) return;
-  setOutSaving(true);
-  try {
-    await api.post(DELETE_BAG_URL, { bag_no });
-    await fetchStatus();
-  } catch (e) {
-    console.error(e);
-    showError(e?.message || 'Failed to delete output bag.');
-  } finally {
-    setOutSaving(false);
-  }
-};
-
+  const handleDeleteOut = async (bag_no) => {
+    if (!bag_no) return;
+    setOutSaving(true);
+    try {
+      await api.post(DELETE_BAG_URL, { bag_no });
+      await fetchStatus();
+    } catch (e) {
+      console.error(e);
+      showError(e?.message || 'Failed to delete output bag.');
+    } finally {
+      setOutSaving(false);
+    }
+  };
 
 const resetAll = () => {
     setBusy(false);
     setStarted(false);
-        setLot(null);
         setLot(null);
         
     
@@ -430,20 +400,19 @@ setLabels([]);
     setSearch("");
   };
 
-  
-const moveToStock = async () => {
-  if (!canMoveToStock) return;
-  try {
-    const payload = lot?.lot_id ? { lot_id: lot.lot_id } : {};
-    await api.post(MOVE_TO_STOCK_URL, payload);
-    resetAll();
-    await fetchStatus();
-  } catch (e) {
-    console.error('move_to_stock', e);
-    showError(e?.message || 'Failed to move to stock.');
-  }
-};
-
+  const moveToStock = async () => {
+    if (!canMoveToStock) return;
+    try {
+      const payload = lot?.lot_id ? { lot_id: lot.lot_id } : {};
+      await api.post(MOVE_TO_STOCK_URL, payload);
+      // success → reset component and refresh
+      resetAll();
+      await fetchStatus();
+    } catch (e) {
+      console.error('move_to_stock', e);
+      showError(e?.message || 'Failed to move to stock.');
+    }
+  };
 
 
   return (
@@ -543,8 +512,7 @@ const moveToStock = async () => {
                 </Stack>
                 <Chip label={`${loaderBags.length}/4 loaded`} size="small" />
               </Stack>
-        
-      </Stack>
+            </Stack>
 
             <Box sx={{ flex: 1, minHeight: { xs: 250, md: 300 }, overflowY: "auto", overflowX: "hidden", pr: 1, width: "100%", scrollbarGutter: "stable" }}>
               {loaderBags.length === 0 ? (
@@ -584,9 +552,9 @@ const moveToStock = async () => {
               </Box>
             ) : (
               <>
-                {gradesError && (
+                {error && (
                   <Alert severity="error" sx={{ mb: 1 }}>
-                    {gradesError}
+                    {error}
                   </Alert>
                 )}
                 <Box
@@ -644,7 +612,7 @@ const moveToStock = async () => {
                 size="small"
                 variant="contained"
                 startIcon={<PlayArrowIcon />}
-                disabled={busy || loaderBags.length === 0 || selectedGrades.length === 0 || savingLive || statusLoading || starting}
+                disabled={busy || loaderBags.length === 0 || selectedGrades.length === 0 || savingLive || statusLoading}
                 onClick={startScreening}
               >
                 Start
@@ -681,8 +649,7 @@ const moveToStock = async () => {
                     color={Math.abs((loadedWeight - outputsTotal)) <= tolerance ? "success" : "error"}
                   />
                 </Stack>
-        
-      </Stack>
+              </Stack>
 
               <LinearProgress variant="determinate" value={Math.min(100, (outputsTotal / (loadedWeight || 1)) * 100)} />
 
