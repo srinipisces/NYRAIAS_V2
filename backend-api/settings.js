@@ -153,9 +153,39 @@ router.get('/output-grades', authenticate, async (req, res) => {
  *    POST /api/settings/output-grades
  *    Body: { "grade": "3x4", "remarks": "..." }
  */
-router.post('/settings/output-grades', authenticate, async (req, res) => {
-  const { accountid, userid } = req.user;
-  const table = tSettings(accountid);
+// routes/settings.output-grades.js
+
+
+
+// --- route ----------------------------------------------
+router.post('/output-grades', authenticate, async (req, res) => {
+  
+    // --- utils (inline, no external helpers) ----------------
+    function assertSafeIdent(s) {
+      if (!/^[a-zA-Z0-9_]+$/.test(s || '')) throw new Error('unsafe ident');
+    }
+    function settingsTable(accountid) {
+      assertSafeIdent(accountid);
+      return `${accountid}_settings`;
+    }
+    /** Ensure the table has exactly one row (or at least one).
+     *  No assumption of an id column; inserts a default row if table is empty. */
+    async function ensureSingletonRow(client, table) {
+      await client.query(`
+        INSERT INTO ${table} (settings)
+        SELECT '{}'::jsonb
+        WHERE NOT EXISTS (SELECT 1 FROM ${table});
+      `);
+    }
+  
+  const { accountid, userid } = req.user || {};
+  if (!accountid) return res.status(400).json({ success: false, error: 'Missing account id' });
+
+  let table;
+  try { table = settingsTable(accountid); } catch {
+    return res.status(400).json({ success: false, error: 'Invalid account id' });
+  }
+
   const { grade, remarks } = req.body || {};
   if (typeof grade !== 'string' || !grade.trim()) {
     return res.status(400).json({ success: false, error: 'grade must be a non-empty string' });
@@ -165,13 +195,16 @@ router.post('/settings/output-grades', authenticate, async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+
+    // Make sure a single settings row exists
     await ensureSingletonRow(client, table);
 
-    // Lock the singleton row and check for duplicate
+    // Lock the (single) row and check for duplicate
     const dup = await client.query(
       `SELECT settings #>> $1::text[] AS existing
-       FROM ${table}
-       FOR UPDATE;`,
+         FROM ${table}
+        FOR UPDATE
+        LIMIT 1;`,
       [[ 'Output_Grades', g ]]
     );
     const existing = dup.rows[0]?.existing || null;
@@ -182,7 +215,6 @@ router.post('/settings/output-grades', authenticate, async (req, res) => {
         .json({ success: false, error: `Grade "${g}" already exists (status: ${existing}).` });
     }
 
-    // Build audit entry
     const auditEntry = {
       ts: new Date().toISOString(),
       userid,
@@ -193,41 +225,51 @@ router.post('/settings/output-grades', authenticate, async (req, res) => {
       remarks: remarks || null
     };
 
-    // Merge grade + append audit in one write
+    // Update settings JSON atomically
     const sql = `
-      WITH cur AS (SELECT settings FROM ${table} FOR UPDATE),
+      WITH cur AS (
+        SELECT settings
+          FROM ${table}
+         FOR UPDATE
+         LIMIT 1
+      ),
       oldbits AS (
         SELECT
           COALESCE(cur.settings->'Output_Grades','{}'::jsonb) AS og,
-          cur.settings->'Output_Grades_Auditrail'           AS audit_arr,
+          cur.settings->'Output_Grades_Auditrail'            AS audit_arr,
           cur.settings                                       AS s
         FROM cur
       ),
       og2 AS (
-        SELECT oldbits.s, oldbits.audit_arr,
-               (oldbits.og || jsonb_build_object($1, 'Active')) AS new_og
+        SELECT
+          oldbits.s,
+          oldbits.audit_arr,
+          (oldbits.og || jsonb_build_object($1::text, 'Active')) AS new_og
         FROM oldbits
       ),
       s1 AS (
-        SELECT jsonb_set(og2.s, '{Output_Grades}', og2.new_og, true) AS j,
-               og2.audit_arr
+        SELECT
+          jsonb_set(og2.s, '{Output_Grades}', og2.new_og, true) AS j,
+          og2.audit_arr
         FROM og2
       ),
       s2 AS (
-        SELECT jsonb_set(
-                 s1.j,
-                 '{Output_Grades_Auditrail}',
-                 COALESCE(s1.audit_arr, '[]'::jsonb) || jsonb_build_array($2::jsonb),
-                 true
-               ) AS j
+        SELECT
+          jsonb_set(
+            s1.j,
+            '{Output_Grades_Auditrail}',
+            COALESCE(s1.audit_arr, '[]'::jsonb) || jsonb_build_array(to_jsonb($2::json)),
+            true
+          ) AS j
         FROM s1
       )
       UPDATE ${table} t
-      SET settings = s2.j
+         SET settings = s2.j
       FROM s2
       RETURNING t.settings->'Output_Grades' AS output_grades;
     `;
-    const { rows } = await client.query(sql, [g, auditEntry]);
+
+    const { rows } = await client.query(sql, [g, JSON.stringify(auditEntry)]);
     await client.query('COMMIT');
 
     return res.status(201).json({
@@ -242,6 +284,8 @@ router.post('/settings/output-grades', authenticate, async (req, res) => {
     client.release();
   }
 });
+
+
 
 
 

@@ -604,5 +604,82 @@ router.post("/bagwise_delivered", authenticate, async (req, res) => {
   }
 });
 
+router.post("/screening_inward", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body || {};
+
+    // Expect 'DDMMYY' per your standard
+    const ddmmyy = /^\d{6}$/;
+    if (!ddmmyy.test(start_date) || !ddmmyy.test(end_date)) {
+      return res.status(400).json({ success: false, error: "start_date and end_date must be DDMMYY (e.g., '170825')" });
+    }
+
+    const table = `${accountid}_destoning`;
+    const table1 = `${accountid}_screening_outward`;
+
+    // Sargable half-open range: >= start AND < (end + 1 day) covers the full end_date
+    const query = `
+      SELECT
+        ds_bag_no AS bag_no,
+        weight_out AS destoning_weight,
+        screening_bag_weight,
+        screening_inward_time,
+        screening_machine,
+        userid_screening_inward AS userid
+      FROM ${table}
+      WHERE screening_inward_time >= TO_DATE($1, 'DDMMYY')
+        AND screening_inward_time <  TO_DATE($2, 'DDMMYY') + INTERVAL '1 day'
+      union
+      select bag_no,0 as weight_out,reload_bag_weight as screening_bag_weight,
+      reload_time as screening_inward_time,reload_machine as screening_machine,
+      reload_userid as userid
+      from ${table1}
+      WHERE reload_time >= TO_DATE($1, 'DDMMYY')
+        AND reload_time <  TO_DATE($2, 'DDMMYY') + INTERVAL '1 day'
+      ORDER BY screening_inward_time;
+    `;
+
+    const { rows } = await pool.query(query, [start_date, end_date]);
+    const columns = rows.length ? Object.keys(rows[0]) : [];
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error('Error in /screening_inward:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
+
+
+router.post("/screening_outward", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user;
+    const { start_date, end_date } = req.body || {};
+
+    // Expect 'DDMMYY' per your standard
+    const ddmmyy = /^\d{6}$/;
+    if (!ddmmyy.test(start_date) || !ddmmyy.test(end_date)) {
+      return res.status(400).json({ success: false, error: "start_date and end_date must be DDMMYY (e.g., '170825')" });
+    }
+
+    const table = `${accountid}_screening_outward`;
+
+    // Sargable half-open range: >= start AND < (end + 1 day) covers the full end_date
+    const query = `
+      select bag_no,weight,screening_out_dt,grade,ctc,userid,delivery_status,stock_change_dt as status_change_dt,
+      stock_change_userid as status_change_userid
+      FROM ${table}
+      WHERE screening_out_dt >= TO_DATE($1, 'DDMMYY')
+        AND screening_out_dt <  TO_DATE($2, 'DDMMYY') + INTERVAL '1 day'
+      ORDER BY screening_out_dt;
+    `;
+
+    const { rows } = await pool.query(query, [start_date, end_date]);
+    const columns = rows.length ? Object.keys(rows[0]) : [];
+    res.json({ columns, rows });
+  } catch (err) {
+    console.error('Error in /screening_inward:', err);
+    res.status(500).json({ error: 'Database error' });
+  }
+});
 
 module.exports = router;

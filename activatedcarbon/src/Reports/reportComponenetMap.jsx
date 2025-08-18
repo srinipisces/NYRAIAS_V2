@@ -68,7 +68,15 @@ export const reportComponentMap = {
     component: RawMaterialStockHistory,
     needsDateRange: true
   },
-
+  // History Reports
+  'Screening Inward': {
+    component: (props) => <StandardReport endpoint="screening_inward" title="Screening Inward Daywise" {...props} />,
+    needsDateRange: true
+  },
+  'Screening Outward': {
+    component: (props) => <StandardReport endpoint="screening_outward" title="Screening Outward Daywise" {...props} />,
+    needsDateRange: true
+  },
   // Yield Report
   'Kiln Yield': {
     component: KilnYieldReport,
