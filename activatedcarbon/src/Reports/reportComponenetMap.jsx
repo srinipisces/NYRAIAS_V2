@@ -77,6 +77,14 @@ export const reportComponentMap = {
     component: (props) => <StandardReport endpoint="screening_outward" title="Screening Outward Daywise" {...props} />,
     needsDateRange: true
   },
+  'Screening Summary': {
+    component: (props) => <StandardReport endpoint="screening_summary" title="Screening Summary Daywise" {...props} />,
+    needsDateRange: true
+  },
+  'Screening Breakdown': {
+    component: (props) => <StandardReport endpoint="screening_breakdown" title="Screening Breakdown Daywise" {...props} />,
+    needsDateRange: true
+  },
   // Yield Report
   'Kiln Yield': {
     component: KilnYieldReport,

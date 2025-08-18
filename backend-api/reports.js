@@ -623,7 +623,7 @@ router.post("/screening_inward", authenticate, async (req, res) => {
       SELECT
         ds_bag_no AS bag_no,
         weight_out AS destoning_weight,
-        screening_bag_weight,
+        screening_inward_bag_weight,
         screening_inward_time,
         screening_machine,
         userid_screening_inward AS userid
@@ -682,4 +682,273 @@ router.post("/screening_outward", authenticate, async (req, res) => {
   }
 });
 
+
+
+router.post("/screening_summary", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user || {};
+    const { start_date, end_date } = req.body || {};
+
+    // Expect 'DDMMYY', e.g. '170825'
+      const ddmmyy = /^\d{6}$/;
+      if (!ddmmyy.test(start_date) || !ddmmyy.test(end_date)) {
+        return res.status(400).json({
+          error: "start_date and end_date must be DDMMYY (e.g., '170825')"
+        });
+      }
+
+
+    const safeAccount = String(accountid).replace(/[^a-z0-9_]/gi, "");
+    const destoningTable = `${safeAccount}_destoning`;
+    const screeningOutwardTable = `${safeAccount}_screening_outward`;
+
+    // Primary (date spine + sums)
+    const qWeights = `
+      WITH days AS (
+        SELECT generate_series(
+          to_date($1, 'DDMMYY'),
+          to_date($2, 'DDMMYY'),
+          interval '1 day'
+        )::date AS d
+      ),
+      dest AS (
+        SELECT
+          screening_inward_time::date AS d,
+          SUM(weight_out)::numeric            AS destoning_weight,
+          SUM(screening_bag_weight)::numeric  AS screening_inward_bag_weight
+        FROM ${destoningTable}
+        WHERE screening_inward_time::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+        GROUP BY 1
+      ),
+      reload AS (
+        SELECT
+          reload_time::date AS d,
+          SUM(reload_bag_weight)::numeric AS reload_bag_weight
+        FROM ${screeningOutwardTable}
+        WHERE reload_time::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+        GROUP BY 1
+      )
+      SELECT
+        d AS day,
+        to_char(d, 'YYYY-MM-DD') AS iso_day,
+        to_char(d, 'DD-MM-YYYY') AS date_str,
+        COALESCE(dest.destoning_weight, 0) AS destoning_weight,
+        COALESCE(dest.screening_inward_bag_weight, 0) + COALESCE(reload.reload_bag_weight, 0) AS screening_inward_bag_weight
+      FROM days
+      LEFT JOIN dest   USING (d)
+      LEFT JOIN reload USING (d)
+      ORDER BY d;
+    `;
+
+    // Secondary (grades by day)
+    const qGrades = `
+      SELECT
+        to_char(screening_out_dt::date, 'YYYY-MM-DD') AS iso_day,
+        grade,
+        SUM(weight)::numeric AS screening_out_weight
+      FROM ${screeningOutwardTable}
+      WHERE screening_out_dt::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+      GROUP BY 1, 2
+      ORDER BY 1, 2;
+    `;
+
+    const [{ rows: weightRows }, { rows: gradeRows }] = await Promise.all([
+      pool.query(qWeights, [start_date, end_date]),
+      pool.query(qGrades, [start_date, end_date]),
+    ]);
+
+    // Build iso_day -> { grade -> total } and collect all grade labels for columns
+    const gradeByDay = new Map();
+    const gradeSet = new Set();
+    for (const r of gradeRows) {
+      const iso = r.iso_day;
+      const g = (r.grade ?? "").toString().trim();
+      const wt = Number(r.screening_out_weight || 0);
+      if (!gradeByDay.has(iso)) gradeByDay.set(iso, {});
+      gradeByDay.get(iso)[g] = (gradeByDay.get(iso)[g] || 0) + wt;
+      gradeSet.add(g);
+    }
+    const gradeCols = Array.from(gradeSet).sort((a, b) => String(a).localeCompare(String(b)));
+
+    // Merge; include days that appear in either dataset, skip pure empties
+    const rows = [];
+    for (const w of weightRows) {
+      const grades = gradeByDay.get(w.iso_day) || {};
+      const row = {
+        date: w.date_str, // DD-MM-YYYY
+        destoning_weight: Number(w.destoning_weight || 0),
+        screening_inward_bag_weight: Number(w.screening_inward_bag_weight || 0),
+      };
+      let gradeSum = 0;
+      for (const col of gradeCols) {
+        const v = Number(grades[col] || 0);
+        row[col] = v;
+        gradeSum += v;
+      }
+      row.screening_out_total = gradeSum;
+      if (row.destoning_weight !== 0 || row.screening_inward_bag_weight !== 0 || gradeSum !== 0) {
+        rows.push(row);
+      }
+    }
+
+    // columns: put total at the very end
+    const columns = ["date", "destoning_weight", "screening_inward_bag_weight", ...gradeCols, "screening_out_total"];
+
+    return res.json({ columns, rows });
+  } catch (err) {
+    console.error("Error in /screening_summary:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+
+
+
+router.post("/screening_breakdown", authenticate, async (req, res) => {
+  try {
+    const { accountid } = req.user || {};
+    let { start_date, end_date } = req.body || {};
+
+    // Validate DDMMYY (e.g., '170825')
+    const ddmmyy = /^\d{6}$/;
+    if (!accountid) return res.status(400).json({ error: "Missing account id" });
+    if (!ddmmyy.test(start_date) || !ddmmyy.test(end_date)) {
+      return res.status(400).json({ error: "start_date and end_date must be DDMMYY (e.g., '170825')" });
+    }
+
+    // Optional: auto-swap if dates are reversed
+    if (Number(start_date.slice(4) + start_date.slice(2,4) + start_date.slice(0,2)) >
+        Number(end_date.slice(4)   + end_date.slice(2,4)   + end_date.slice(0,2))) {
+      [start_date, end_date] = [end_date, start_date];
+    }
+
+    const safeAccount = String(accountid).replace(/[^a-z0-9_]/gi, "");
+    const destoningTable = `${safeAccount}_destoning`;
+    const screeningOutwardTable = `${safeAccount}_screening_outward`;
+
+    const q = `
+      WITH
+      days AS (
+        SELECT generate_series(
+          to_date($1, 'DDMMYY'),
+          to_date($2, 'DDMMYY'),
+          interval '1 day'
+        )::date AS d
+      ),
+      dest AS (
+        SELECT
+          screening_inward_time::date AS d,
+          SUM(weight_out)::numeric           AS ex_destone,
+          SUM(screening_bag_weight)::numeric AS in_screener_inward
+        FROM ${destoningTable}
+        WHERE screening_inward_time::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+        GROUP BY 1
+      ),
+      reload AS (
+        SELECT
+          reload_time::date AS d,
+          SUM(reload_bag_weight)::numeric AS in_screener_reload
+        FROM ${screeningOutwardTable}
+        WHERE reload_time::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+        GROUP BY 1
+      ),
+      primary_totals AS (
+        SELECT
+          d.d,
+          COALESCE(dest.ex_destone, 0) AS ex_destone,
+          COALESCE(dest.in_screener_inward, 0) + COALESCE(reload.in_screener_reload, 0) AS in_screener
+        FROM days d
+        LEFT JOIN dest   ON dest.d   = d.d
+        LEFT JOIN reload ON reload.d = d.d
+      ),
+      grades AS (
+        SELECT
+          screening_out_dt::date AS d,
+          grade,
+          SUM(weight)::numeric AS ex_screener
+        FROM ${screeningOutwardTable}
+        WHERE screening_out_dt::date BETWEEN to_date($1,'DDMMYY') AND to_date($2,'DDMMYY')
+        GROUP BY 1, 2
+      ),
+      grade_totals AS (
+        SELECT d, SUM(ex_screener)::numeric AS ex_screener_total
+        FROM grades
+        GROUP BY 1
+      ),
+      grade_rows AS (
+        SELECT
+          to_char(d.d, 'DD-MM-YYYY') AS date,
+          g.grade                     AS grade,
+          NULL::numeric               AS ex_destone,
+          NULL::numeric               AS in_screener,
+          COALESCE(g.ex_screener, 0) AS ex_screener,
+          CASE
+            WHEN COALESCE(gt.ex_screener_total, 0) = 0 THEN NULL
+            ELSE ROUND(100.0 * g.ex_screener / gt.ex_screener_total, 2)
+          END                         AS pct_of_grade,
+          NULL::numeric               AS loss_carry_over
+        FROM days d
+        JOIN grades g      ON g.d  = d.d
+        LEFT JOIN grade_totals gt ON gt.d = d.d
+      ),
+      total_rows AS (
+        SELECT
+          to_char(d.d, 'DD-MM-YYYY')                                        AS date,
+          'Total'                                                           AS grade,
+          COALESCE(p.ex_destone, 0)                                         AS ex_destone,
+          COALESCE(p.in_screener, 0)                                        AS in_screener,
+          COALESCE(gt.ex_screener_total, 0)                                 AS ex_screener,
+          NULL::numeric                                                     AS pct_of_grade,
+          COALESCE(gt.ex_screener_total, 0) - COALESCE(p.ex_destone, 0)     AS loss_carry_over
+        FROM days d
+        LEFT JOIN primary_totals p ON p.d = d.d
+        LEFT JOIN grade_totals  gt ON gt.d = d.d
+        -- keep the day only if there is data in either dataset
+        WHERE COALESCE(p.ex_destone, 0) <> 0
+           OR COALESCE(p.in_screener, 0) <> 0
+           OR COALESCE(gt.ex_screener_total, 0) <> 0
+      )
+      SELECT *
+      FROM (
+        SELECT * FROM grade_rows
+        UNION ALL
+        SELECT * FROM total_rows
+      ) AS u
+      ORDER BY to_date(u.date,'DD-MM-YYYY'),
+               CASE WHEN u.grade = 'Total' THEN 1 ELSE 0 END,
+               u.grade;
+    `;
+
+    const { rows: dbRows } = await pool.query(q, [start_date, end_date]);
+
+    // Convert NUMERIC strings to numbers, keep nulls for blank cells
+    const toNum = (v) => (v == null ? null : Number(v));
+    const rows = dbRows.map((r) => ({
+      date: r.date,
+      grade: r.grade,
+      ex_destone: toNum(r.ex_destone),
+      in_screener: toNum(r.in_screener),
+      ex_screener: toNum(r.ex_screener),
+      pct_of_grade: toNum(r.pct_of_grade),
+      loss_carry_over: toNum(r.loss_carry_over),
+    }));
+
+    const columns = ["date", "grade", "ex_destone", "in_screener", "ex_screener", "pct_of_grade", "loss_carry_over"];
+    return res.json({ columns, rows });
+  } catch (err) {
+    console.error("Error in /screening_breakdown:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 module.exports = router;
+
+
+
+
+
+
+
+
+

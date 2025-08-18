@@ -1,4 +1,4 @@
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState } from "react";
 import {
   Box,
   Card,
@@ -16,8 +16,10 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  InputAdornment,
   Chip,
   InputBase,
+  Divider
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import SearchIcon from "@mui/icons-material/Search";
@@ -27,12 +29,11 @@ import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import SaveIcon from "@mui/icons-material/Save";
 
 /**
- * Bag Data Entry (MUI version) with Bucket Navigation
- * - Left: bag list with bucket nav (<  Bucket  >)
+ * Bag Data Entry (MUI version)
+ * - Left: bag list
  * - Right: 8 metrics as Chip + compact input (80px), two per row
- * - Inputs are draft-friendly: free typing, commit on blur / Enter
  * - Remarks, Next Destination, Save / Save & Next
- * - Mobile: bag dropdown + Prev/Next (from current bucket only)
+ * - Mobile: bag dropdown + Prev/Next
  */
 
 const DECIMAL_PLACES = 2;
@@ -58,16 +59,6 @@ const DESTINATIONS = [
   "Reject",
 ];
 
-// Buckets for the bag list tabs
-const BUCKETS = [
-  "Destoning",
-  "Crushing",
-  "Bundling",
-  "Screening",
-  "De-Magmetize",
-  "De- Dusting",
-];
-
 // Helpers
 export function formatNum(n) {
   return isFinite(n) ? n.toFixed(DECIMAL_PLACES) : (0).toFixed(DECIMAL_PLACES);
@@ -88,25 +79,26 @@ const FocusInput = styled(InputBase)(({ theme }) => ({
   "&.Mui-focused": {
     borderColor: theme.palette.primary.main,
   },
+  // remove number spinners
+  "& input[type=number]": { MozAppearance: "textfield" },
+  "& input[type=number]::-webkit-outer-spin-button, & input[type=number]::-webkit-inner-spin-button": {
+    WebkitAppearance: "none",
+    margin: 0,
+  },
 }));
 
-// Bag List with bucket navigation header
-function BagList({ items, selectedId, onSelect, search, setSearch, bucketName, onPrevBucket, onNextBucket }) {
+// Re_Process-style Bag List
+function BagList({ items, selectedId, onSelect, search, setSearch }) {
   return (
-    <Card variant="outlined" sx={{ height: 500 }}>
+    <Card variant="outlined" sx={{height:500}}>
       <CardHeader
         title={
-          <Box sx={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: 0 }}>
-            <Button size="small" variant="text" onClick={onPrevBucket}>&lt;</Button>
-            <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 1 }}>
-              <Typography variant="subtitle1" sx={{ fontWeight: 700 ,}}>{bucketName}</Typography>
-              
-            </Box>
-            <Button size="small" variant="text" onClick={onNextBucket}>&gt;</Button>
-            <Box></Box>
-            <Box sx={{alignItems: "center"}}><Chip size="small" label={`No.of bags in Bucket : ${items.length}`} color="default" /></Box>
+          <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <Typography variant="subtitle1" sx={{ display: "flex", alignItems: "center", gap: 1 }}>
+              <Inventory2Icon fontSize="small" /> Bags
+            </Typography>
+            <Chip size="small" label={`${items.length}`} color="default" />
           </Box>
-          
         }
       />
       <CardContent>
@@ -165,15 +157,15 @@ function BagList({ items, selectedId, onSelect, search, setSearch, bucketName, o
   );
 }
 
-export default function Re_Process_Quality() {
-  // Sample data — replace with real API data; ensure each bag has a 'stage' for the bucket
+export default function BagDataEntry() {
+  // Sample data — replace with props or API data
   const [bags] = useState([
-    { id: "BAG_300725_0001", weightKg: 25.4, grade: "A", stage: "Destoning" },
-    { id: "BAG_300725_0002", weightKg: 26.1, grade: "B", stage: "Crushing" },
-    { id: "BAG_300725_0003", weightKg: 24.9, grade: "A", stage: "Bundling" },
-    { id: "BAG_300725_0004", weightKg: 25.0, grade: "C", stage: "Screening" },
-    { id: "BAG_300725_0005", weightKg: 26.0, grade: "B", stage: "De-Magmetize" },
-    { id: "BAG_300725_0006", weightKg: 25.2, grade: "A", stage: "De- Dusting" },
+    { id: "BAG_300725_0001", weightKg: 25.4, grade: "A" },
+    { id: "BAG_300725_0002", weightKg: 26.1, grade: "B" },
+    { id: "BAG_300725_0003", weightKg: 24.9, grade: "A" },
+    { id: "BAG_300725_0004", weightKg: 25.0, grade: "C" },
+    { id: "BAG_300725_0005", weightKg: 26.0, grade: "B" },
+    { id: "BAG_300725_0006", weightKg: 25.2, grade: "A" },
   ]);
 
   const [search, setSearch] = useState("");
@@ -182,56 +174,27 @@ export default function Re_Process_Quality() {
     [bags, search]
   );
 
-  // bucket state + visible list
-  const [bucketIndex, setBucketIndex] = useState(0);
-  const currentBucket = BUCKETS[bucketIndex];
-  const visible = useMemo(
-    () => filtered.filter((b) => (b.stage || "").toLowerCase() === currentBucket.toLowerCase()),
-    [filtered, currentBucket]
-  );
-
-  // selection within current bucket
   const [index, setIndex] = useState(0);
-  useEffect(() => { setIndex(0); }, [currentBucket, search]);
-  const selected = visible[index] ?? visible[0] ?? null;
+  const selected = filtered[index] ?? filtered[0] ?? null;
 
-  // metric values + draft buffers
   const [values, setValues] = useState({
-    "+3": 0, "3/4": 0, "4/8": 0, "8/12": 0, "12/30": 0, "-30": 0, CBD: 0, CTC: 0,
+    "+3": 0,
+    "3/4": 0,
+    "4/8": 0,
+    "8/12": 0,
+    "12/30": 0,
+    "-30": 0,
+    CBD: 0,
+    CTC: 0,
   });
-  const [drafts, setDrafts] = useState({});
   const [remarks, setRemarks] = useState("");
   const [destination, setDestination] = useState(DESTINATIONS[0]);
+  const [drafts, setDrafts] = useState({});
 
-  const onPrevBucket = () => setBucketIndex((i) => (i - 1 + BUCKETS.length) % BUCKETS.length);
-  const onNextBucket = () => setBucketIndex((i) => (i + 1) % BUCKETS.length);
-
-  const canPrev = index > 0;
-  const canNext = index < visible.length - 1;
-
-  const handleSave = () => {
-    if (!selected) return;
-    const payload = {
-      bucket: currentBucket,
-      bag_no: selected.id,
-      metrics: values,
-      remarks,
-      next_destination: destination,
-    };
-    console.log("SAVE", payload);
-  };
-
-  const jumpToBag = (bagId) => {
-    const i = visible.findIndex((b) => b.id === bagId);
-    if (i >= 0) setIndex(i);
-  };
-
-  // programmatic numeric update
   const onChangeMetric = (key, next) => {
     setValues((prev) => ({ ...prev, [key]: clampRound2(next, 0, 100) }));
   };
 
-  // Draft editing helpers
   const commitDraft = (key) => {
     const raw = drafts[key];
     if (raw === undefined) return;
@@ -245,9 +208,11 @@ export default function Re_Process_Quality() {
     setValues((prev) => ({ ...prev, [key]: next }));
     setDrafts((p) => { const c = { ...p }; delete c[key]; return c; });
   };
+
   const revertDraft = (key) => {
     setDrafts((p) => { const c = { ...p }; delete c[key]; return c; });
   };
+
   const stepBy = (key, delta) => {
     const def = METRICS.find((m) => m.key === key) || { min: 0, max: 100 };
     const current = drafts[key] !== undefined ? parseFloat(String(drafts[key]).replace(",", ".")) : values[key];
@@ -257,20 +222,38 @@ export default function Re_Process_Quality() {
     setDrafts((p) => { const c = { ...p }; delete c[key]; return c; });
   };
 
+  const canPrev = index > 0;
+  const canNext = index < filtered.length - 1;
+
+  const handleSave = () => {
+    if (!selected) return;
+    const payload = {
+      bag_no: selected.id,
+      metrics: values,
+      remarks,
+      next_destination: destination,
+    };
+    // TODO: Replace with real API call
+    // await axios.post("/api/bag/metrics", payload)
+    console.log("SAVE", payload);
+  };
+
+  const jumpToBag = (bagId) => {
+    const i = filtered.findIndex((b) => b.id === bagId);
+    if (i >= 0) setIndex(i);
+  };
+
   return (
-    <Box sx={{ width: "100%", maxWidth: 1440, mx: "auto", p: 2 }}>
+    <Box sx={{ width: "100%", maxWidth: 1440, mx: "auto", p: 0.5 }}>
       <Grid container spacing={2} wrap="nowrap" alignItems="flex-start">
-        {/* Left: Bag List with buckets */}
+        {/* Left: Bag List */}
         <Grid item sx={{ width: { xs: 220, sm: 240, md: 260, lg: 300 }, flexShrink: 0 }}>
           <BagList
-            items={visible}
+            items={filtered}
             selectedId={selected?.id}
             onSelect={(id) => jumpToBag(id)}
             search={search}
             setSearch={setSearch}
-            bucketName={currentBucket}
-            onPrevBucket={onPrevBucket}
-            onNextBucket={onNextBucket}
           />
         </Grid>
 
@@ -309,9 +292,10 @@ export default function Re_Process_Quality() {
                         Next
                       </Button>
                     </Box>
+                    
                   </Box>
-
-                  {/* Mobile bag picker (current bucket only) */}
+                  <Divider sx={{ my: 1 }} />
+                  {/* Mobile bag picker */}
                   <Box sx={{ display: { xs: "grid", md: "none" }, gap: 1 }}>
                     <FormControl fullWidth size="small">
                       <InputLabel id="bag-select-label">Select Bag</InputLabel>
@@ -321,7 +305,7 @@ export default function Re_Process_Quality() {
                         value={selected?.id || ""}
                         onChange={(e) => jumpToBag(e.target.value)}
                       >
-                        {visible.map((b) => (
+                        {filtered.map((b) => (
                           <MenuItem key={b.id} value={b.id}>
                             {b.id}
                           </MenuItem>
@@ -387,11 +371,17 @@ export default function Re_Process_Quality() {
                           const step = m.step ?? STEP;
                           if (e.key === "Enter" || e.key === "Tab") commitDraft(m.key);
                           else if (e.key === "Escape") revertDraft(m.key);
-                          else if (e.key === "ArrowUp") { e.preventDefault(); stepBy(m.key, step); }
-                          else if (e.key === "ArrowDown") { e.preventDefault(); stepBy(m.key, -step); }
+                          else if (e.key === "ArrowUp") {
+                            e.preventDefault();
+                            stepBy(m.key, step);
+                          } else if (e.key === "ArrowDown") {
+                            e.preventDefault();
+                            stepBy(m.key, -step);
+                          }
                         }}
                         inputProps={{ inputMode: "decimal" }}
                       />
+
                       <Typography variant="caption" color="text.secondary">
                         {m.unit || ""}
                       </Typography>
@@ -399,9 +389,9 @@ export default function Re_Process_Quality() {
                   </Grid>
                 ))}
               </Grid>
-
+              <Divider sx={{ my: 1 }} />
               {/* Remarks & Destination */}
-              <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid container spacing={1} sx={{ mt: 3 }}>
                 <Grid item xs={12} md={8}>
                   <TextField
                     fullWidth
