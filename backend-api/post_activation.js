@@ -8,7 +8,7 @@ const pool = require('./db.js');
 const JWT_SECRET = process.env.JWT_SECRET;
 const checkAccess= require('./checkaccess.js');
 
-const { getKolkataDayString, formatToKolkataDay } = require('./date');
+const { getKolkataDayString, formatToKolkataDay } = require('./date.js');
 let dbConnected = false;
 
 
@@ -459,6 +459,56 @@ router.post('/load_bags', authenticate, checkAccess('Operations.Re-Process'), as
     res.status(500).json({ error: 'Failed to start re-process (load bags).' });
   } finally {
     client.release();
+  }
+});
+
+
+router.get("/bags", authenticate, async (req, res) => {
+  function normalizeBucketToSuffix(bucket = "") {
+    return String(bucket)
+      .toLowerCase()
+      .replace(/-/g, "_")        // hyphens -> underscores
+      .replace(/\s+/g, "_")      // spaces -> underscores
+      .replace(/[^a-z0-9_]/g, "")// strip anything else (hardening)
+      .replace(/_+/g, "_")       // collapse multiple _
+      .replace(/^_+|_+$/g, "");  // trim leading/trailing _
+  }
+  try {
+    const { accountid } = req.user || {};
+    const bucketParam = req.query.bucket;
+
+    if (!bucketParam) {
+      return res.status(400).json({ success: false, error: "Missing 'bucket' query param" });
+    }
+
+    const suffix = normalizeBucketToSuffix(bucketParam);
+
+    // Validate suffix (only a-z, 0-9, _; length guard)
+    if (!/^[a-z0-9_]{2,64}$/.test(suffix)) {
+      return res.status(400).json({ success: false, error: "Invalid bucket value" });
+    }
+
+    const table = `${accountid}_${suffix}_out`;
+
+    // Optional: check that the table exists to return a clean 404 instead of a PG error
+    const existsQ = await pool.query("SELECT to_regclass($1) AS reg;", [table]);
+    if (!existsQ.rows[0]?.reg) {
+      return res.status(404).json({ success: false, error: `Bucket table not found: ${table}` });
+    }
+
+    // NOTE: table name is safe after strict validation above
+    const sql = `
+      SELECT bag_no as id, bag_weight as weightKg , grade, '${bucketParam}' as stage
+      FROM ${table}
+      WHERE stock_status = 'Quality'
+    `;
+
+    const result = await pool.query(sql);
+    console.log(result.rows);
+    return res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error("Error fetching post_activation bags:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
   }
 });
 

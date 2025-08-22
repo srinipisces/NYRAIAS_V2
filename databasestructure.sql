@@ -1133,7 +1133,7 @@ create table testbed_re_process(
   bags_out_userid text
 );
 
-reate table testbed_re_process_out(
+create table testbed_re_process_out(
   lot_id TEXT,
   bag_no text,
   bag_weight numeric,

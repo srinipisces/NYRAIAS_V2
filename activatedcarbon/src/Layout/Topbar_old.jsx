@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import {
   AppBar, Toolbar, Typography, IconButton, Box, Tooltip, Avatar,
   Menu, MenuItem
-} from '../../../node_modules/@mui/material';
+} from '../../node_modules/@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import PersonIcon from '@mui/icons-material/Person';
 import samcarbonLogo from './samcarbon.webp';
 import ChangePasswordDialog from './ChangePasswordDialog';
-import { useAuth } from '../../AuthContext'; // ✅ read from context
+import { useAuth } from '../AuthContext'; // ✅ read from context
 
 export default function Topbar({ onMenuClick }) {
   const { userid } = useAuth(); // ✅ No more token decoding

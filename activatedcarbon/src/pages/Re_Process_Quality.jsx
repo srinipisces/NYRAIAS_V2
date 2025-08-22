@@ -18,6 +18,7 @@ import {
   ListItemText,
   Chip,
   InputBase,
+  Divider
 } from "@mui/material";
 import { styled } from "@mui/material/styles";
 import SearchIcon from "@mui/icons-material/Search";
@@ -258,7 +259,7 @@ export default function Re_Process_Quality() {
   };
 
   return (
-    <Box sx={{ width: "100%", maxWidth: 1440, mx: "auto", p: 2 }}>
+    <Box sx={{ width: "100%", maxWidth: 1440, mx: "auto", p: 0.5 }}>
       <Grid container spacing={2} wrap="nowrap" alignItems="flex-start">
         {/* Left: Bag List with buckets */}
         <Grid item sx={{ width: { xs: 220, sm: 240, md: 260, lg: 300 }, flexShrink: 0 }}>
@@ -310,7 +311,7 @@ export default function Re_Process_Quality() {
                       </Button>
                     </Box>
                   </Box>
-
+                  <Divider sx={{ my: 1 }} />
                   {/* Mobile bag picker (current bucket only) */}
                   <Box sx={{ display: { xs: "grid", md: "none" }, gap: 1 }}>
                     <FormControl fullWidth size="small">
@@ -392,16 +393,14 @@ export default function Re_Process_Quality() {
                         }}
                         inputProps={{ inputMode: "decimal" }}
                       />
-                      <Typography variant="caption" color="text.secondary">
-                        {m.unit || ""}
-                      </Typography>
+
                     </Box>
                   </Grid>
                 ))}
               </Grid>
-
+              <Divider sx={{ my: 1 ,mt:1}} />
               {/* Remarks & Destination */}
-              <Grid container spacing={2} sx={{ mt: 1 }}>
+              <Grid container spacing={2} sx={{ mt: 3 }}>
                 <Grid item xs={12} md={8}>
                   <TextField
                     fullWidth
@@ -428,9 +427,7 @@ export default function Re_Process_Quality() {
                     </MuiSelect>
                   </FormControl>
                   <Box sx={{ display: "flex", gap: 1, mt: 2 }}>
-                    <Button variant="contained" startIcon={<SaveIcon />} onClick={handleSave}>
-                      Save
-                    </Button>
+                    
                     <Button
                       variant="outlined"
                       onClick={() => {

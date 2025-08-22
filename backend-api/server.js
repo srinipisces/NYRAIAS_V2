@@ -42,7 +42,7 @@ pool.connect()
     app.use('/api/reports', require('./reports'));
     app.use('/api/settings', require('./settings'));
     app.use('/api/destoning', require('./destoning'));
-    app.use('/api/re_process', require('./re_process'));
+    app.use('/api/post_activation', require('./post_activation'));
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {

@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import {
   Dialog, DialogTitle, DialogContent, DialogActions,
   TextField, Button, Typography, Alert
-} from '../../../node_modules/@mui/material';
+} from '../../node_modules/@mui/material';
 import axios from 'axios';
 
 const API_URL = import.meta.env.VITE_API_URL;

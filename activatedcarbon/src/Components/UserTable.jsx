@@ -11,7 +11,8 @@ const AccessPages = {
   'Dashboard': [],
   'Operations': [
     'Security', 'Lab', 'Raw-Material Inward', 'Crusher Performance', 'Raw-Material Outward',
-    'Kiln Feed','Kiln Feed Quality','Boiler Performance', 'Kiln Temperature','Kiln Output','Kiln Output Quality', 'De-Stoning','De-Stoning Quality','Screening Inward', 'Screening Outward','Re-Process','Re-Process Quality','Stock'
+    'Kiln Feed','Kiln Feed Quality','Boiler Performance', 'Kiln Temperature','Kiln Output','Kiln Output Quality', 'De-Stoning','De-Stoning Quality','Screening Inward', 'Screening Outward','Re-Process','Re-Process Quality','Stock',
+    'PostActivation'
   ],
   'Reports': [],
   'Settings': [],

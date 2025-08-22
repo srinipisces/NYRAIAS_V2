@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react';
 import {
   Box, Paper, Typography, TextField, Button, Table, TableBody,
   TableCell, TableHead, TableRow, Switch, FormControlLabel,
-  CircularProgress, Alert, IconButton, Tooltip, Snackbar
+  CircularProgress, Alert, IconButton, Tooltip, Snackbar, Chip
 } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RefreshIcon from '@mui/icons-material/Refresh';
@@ -38,17 +38,152 @@ api.interceptors.response.use(
   }
 );
 
-const toRows = (obj = {}) =>
-  Object.entries(obj)
-    .map(([grade, status]) => ({ grade, status }))
-    .sort((a, b) => a.grade.localeCompare(b.grade));
-
-const statusToBool = (s) => s === 'Active';
+/* ---------- Helpers ---------- */
+const statusToBool = (s) => String(s).trim().toLowerCase() === 'active';
 const boolToStatus = (b) => (b ? 'Active' : 'De-Active');
+const normalizeAlias = (s) => s?.trim().toUpperCase() ?? '';
 
 // match TextField size="small" input height (≈40px)
 const CONTROL_HEIGHT = 40;
 
+// pick the grades payload regardless of key casing/shape
+const pickGrades = (payload) =>
+  payload?.Output_Grades || payload?.output_grades || payload || {};
+
+// Convert server object -> rows [{grade, status, quality, alias}]
+const toRows = (obj = {}) =>
+  Object.entries(obj)
+    .map(([grade, val]) => {
+      if (typeof val === 'string') {
+        // backward compatibility with old schema
+        return { grade, status: val, quality: [], alias: '' };
+      }
+      return {
+        grade,
+        status: val?.status ?? 'De-Active',
+        quality: Array.isArray(val?.quality) ? val.quality : [],
+        alias: typeof val?.alias === 'string' ? val.alias : '',
+      };
+    })
+    .sort((a, b) => a.grade.localeCompare(b.grade));
+
+/* ---------- Chip editor for quality[] ---------- */
+function QualityEditor({ grade, values = [], onError }) {
+  const [items, setItems] = React.useState(values);
+  const [input, setInput] = React.useState('');
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    setItems(values); // sync with parent refresh
+  }, [values]);
+
+  const commit = async (next) => {
+    setBusy(true);
+    try {
+      await api.patch(`/api/settings/output-grades/${encodeURIComponent(grade)}`, {
+        quality: next,
+        remarks: 'Updated quality via GradeSettings',
+      });
+    } catch (e) {
+      onError?.(e?.message || 'Failed to update quality.');
+      setItems(values); // revert
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const add = async () => {
+    const v = input.trim();
+    if (!v || items.includes(v)) { setInput(''); return; }
+    const next = [...items, v];
+    setItems(next); // optimistic
+    setInput('');
+    await commit(next);
+  };
+
+  const remove = (v) => async () => {
+    const next = items.filter((x) => x !== v);
+    setItems(next); // optimistic
+    await commit(next);
+  };
+
+  return (
+    <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 0.75 }}>
+      {items.map((q) => (
+        <Chip
+          key={q}
+          label={q}
+          size="small"
+          onDelete={remove(q)}
+          disabled={busy}
+          sx={{ height: 28 }}
+        />
+      ))}
+
+      <TextField
+        size="small"
+        placeholder="Quality"
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        onKeyDown={(e) => { if (e.key === 'Enter') add(); }}
+        disabled={busy}
+        sx={{ width: 80 }}
+      />
+      <Button
+        size="small"
+        variant="contained"
+        onClick={add}
+        disabled={busy || !input.trim()}
+      >
+        Add
+      </Button>
+    </Box>
+  );
+}
+
+/* ---------- Inline alias editor ---------- */
+function AliasEditor({ grade, value = '', onError }) {
+  const [val, setVal] = React.useState(value);
+  const [busy, setBusy] = React.useState(false);
+
+  React.useEffect(() => {
+    setVal(value); // sync with parent refresh
+  }, [value]);
+
+  const commit = async (nextRaw) => {
+    const next = normalizeAlias(nextRaw);
+    if (next === value) return; // no-op
+    setBusy(true);
+    try {
+      // empty string => remove alias
+      await api.patch(`/api/settings/output-grades/${encodeURIComponent(grade)}`, {
+        alias: next, // '' means remove on backend
+        remarks: 'Updated alias via GradeSettings',
+      });
+    } catch (e) {
+      onError?.(e?.message || 'Failed to update alias.');
+      setVal(value); // revert
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <TextField
+      size="small"
+      placeholder="Alias (optional)"
+      value={val}
+      onChange={(e) => setVal(e.target.value)}
+      onBlur={() => commit(val)}
+      onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }}
+      disabled={busy}
+      inputProps={{ maxLength: 4 }}
+      sx={{ maxWidth: 140 }}
+    />
+  );
+}
+
+/* ---------- Main component ---------- */
 export default function GradeSettings() {
   const [activeOnly, setActiveOnly] = useState(false);
   const [rows, setRows] = useState([]);
@@ -72,7 +207,8 @@ export default function GradeSettings() {
       const { data } = await api.get('/api/settings/output-grades', {
         params: { activeOnly }
       });
-      setRows(toRows(data.data || {}));
+      const gradesObj = pickGrades(data.data);
+      setRows(toRows(gradesObj));
     } catch (e) {
       console.error('fetchGrades', e);
       showError(e?.message || 'Failed to load Output_Grades.');
@@ -98,8 +234,11 @@ export default function GradeSettings() {
     setSaving(true);
     setError('');
     try {
+      // Create with new schema (alias left empty by default)
       await api.post('/api/settings/output-grades', {
         grade,
+        status: 'Active',
+        quality: [],
         remarks: 'Added via GradeSettings'
       });
       setNewGrade('');
@@ -180,19 +319,19 @@ export default function GradeSettings() {
           helperText={newGradeErr || ' '}
         />
         <Button
-            variant="contained"
-            startIcon={<AddIcon />}
-            onClick={handleAdd}
-            disabled={disabled || !newGrade.trim()}
-            disableElevation
-            sx={{
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={handleAdd}
+          disabled={disabled || !newGrade.trim()}
+          disableElevation
+          sx={{
             height: CONTROL_HEIGHT,
             minHeight: CONTROL_HEIGHT,
             lineHeight: `${CONTROL_HEIGHT}px`,
             px: 2,
-            }}
+          }}
         >
-            Add
+          Add
         </Button>
       </Box>
 
@@ -213,39 +352,57 @@ export default function GradeSettings() {
             <TableHead>
               <TableRow>
                 <TableCell sx={{ width: 160 }}>Grade</TableCell>
+                <TableCell sx={{ width: 120 }}>Alias</TableCell>
                 <TableCell sx={{ width: 140 }}>Status</TableCell>
+                <TableCell>Quality Parameters</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={2} align="center" sx={{ py: 4, color: 'text.secondary' }}>
+                  <TableCell colSpan={4} align="center" sx={{ py: 4, color: 'text.secondary' }}>
                     No grades found.
                   </TableCell>
                 </TableRow>
               ) : (
-                rows.map(({ grade, status }) => {
-                  const isActive = statusToBool(status);
-                  const busy = !!toggling[grade];
-                  return (
-                    <TableRow key={grade} hover>
-                      <TableCell>{grade}</TableCell>
-                      <TableCell>
-                        <FormControlLabel
-                          label={isActive ? 'Active' : 'De-Active'}
-                          control={
-                            <Switch
-                              size="small"
-                              checked={isActive}
-                              onChange={(e) => handleToggle(grade, e.target.checked)}
-                              disabled={busy || saving}
-                            />
-                          }
-                        />
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
+                rows
+                  .filter(({ status }) => (activeOnly ? statusToBool(status) : true))
+                  .map(({ grade, status, quality, alias }) => {
+                    const isActive = statusToBool(status);
+                    const busy = !!toggling[grade];
+                    return (
+                      <TableRow key={grade} hover>
+                        <TableCell>{grade}</TableCell>
+                        <TableCell>
+                          <AliasEditor
+                            grade={grade}
+                            value={alias}
+                            onError={(msg) => showError(msg)}
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <FormControlLabel
+                            label={isActive ? 'Active' : 'De-Active'}
+                            control={
+                              <Switch
+                                size="small"
+                                checked={isActive}
+                                onChange={(e) => handleToggle(grade, e.target.checked)}
+                                disabled={busy || saving}
+                              />
+                            }
+                          />
+                        </TableCell>
+                        <TableCell>
+                          <QualityEditor
+                            grade={grade}
+                            values={quality}
+                            onError={(msg) => showError(msg)}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
               )}
             </TableBody>
           </Table>
