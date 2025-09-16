@@ -10,6 +10,24 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET;
 const checkAccess= require('./checkaccess.js');
 
+// near your route file top
+const appendAudit = async (client, table, jsonPath, entry) => {
+  await client.query(
+    `
+    UPDATE ${table}
+    SET settings = jsonb_set(
+      COALESCE(settings, '{}'::jsonb),
+      $1::text[],
+      COALESCE(settings #> $1::text[], '[]'::jsonb) || jsonb_build_array($2::jsonb),
+      true
+    )
+    `,
+    [jsonPath, JSON.stringify(entry)]
+  );
+};
+
+
+
 function tSettings(accountid) {
   if (!/^[a-z0-9_]+$/i.test(accountid)) throw new Error('Bad accountid');
   return `${accountid}_settings`;
@@ -115,6 +133,7 @@ async function ensureSingletonRow(client, table) {
 }
 
 // -------------------- GET (list) --------------------
+// GET /settings/output-grades
 router.get('/output-grades', authenticate, async (req, res) => {
   const { accountid } = req.user || {};
   const { activeOnly } = req.query || {};
@@ -125,22 +144,30 @@ router.get('/output-grades', authenticate, async (req, res) => {
     return res.status(400).json({ success: false, error: 'Invalid account id' });
   }
 
+  const onlyActive = String(activeOnly) === 'true';
+
   const client = await pool.connect();
   try {
-    const { rows } = await client.query(`
+    const { rows } = await client.query(
+      `
       WITH cur AS (
         SELECT COALESCE(settings->'Output_Grades','{}'::jsonb) AS og
         FROM ${table}
         LIMIT 1
       ),
-      -- Normalize legacy string -> {status, quality:[]}
+      -- Keep return shape as before:
+      --  - strings -> {status: <string>, quality: []}
+      --  - objects -> unchanged (pass through)
       norm AS (
         SELECT COALESCE(
           (
-            SELECT jsonb_object_agg(k, 
-              CASE 
-                WHEN jsonb_typeof(v) = 'string' 
-                  THEN jsonb_build_object('status', v, 'quality', '[]'::jsonb)
+            SELECT jsonb_object_agg(k,
+              CASE
+                WHEN jsonb_typeof(v) = 'string' THEN
+                  jsonb_build_object(
+                    'status',  trim(both '"' from v::text),
+                    'quality', '[]'::jsonb
+                  )
                 ELSE v
               END
             )
@@ -151,18 +178,20 @@ router.get('/output-grades', authenticate, async (req, res) => {
         FROM cur
       ),
       filtered AS (
-        SELECT CASE 
+        SELECT CASE
           WHEN $1::boolean IS TRUE THEN (
             SELECT COALESCE(jsonb_object_agg(k, v), '{}'::jsonb)
             FROM jsonb_each(norm.og) e(k, v)
-            WHERE lower(e.v->>'status') = 'active'
+            WHERE lower(COALESCE(e.v->>'status','')) = 'active'
           )
           ELSE norm.og
         END AS og
         FROM norm
       )
       SELECT og FROM filtered;
-    `, [String(activeOnly) === 'true']);
+      `,
+      [onlyActive]
+    );
 
     const og = rows[0]?.og || {};
     return res.json({ success: true, data: { Output_Grades: og } });
@@ -173,6 +202,7 @@ router.get('/output-grades', authenticate, async (req, res) => {
     client.release();
   }
 });
+
 
 // -------------------- POST (add grade) --------------------
 // Body: { grade: string, status? ('Active'|'De-Active'), quality?: string[], alias?: string, remarks? }
@@ -482,8 +512,11 @@ router.get('/output-grades-live', authenticate, async (req, res) => {
 router.put('/output-grades-live', authenticate, async (req, res) => {
   const { accountid, userid } = req.user;
   const table = tSettings(accountid);
+  
   const { grades, remarks } = req.body || {};
+  console.log('test1',grades);
   if (!Array.isArray(grades)) {
+    console.log('test',grades);
     return res.status(400).json({ success: false, error: 'grades must be an array' });
   }
 
@@ -493,14 +526,28 @@ router.put('/output-grades-live', authenticate, async (req, res) => {
     await ensureSingletonRow(client, table);
 
     // validate against Active grades
+    // validate against Active grades (supports string "Active" and object {status:"Active", ...})
     const activeRes = await client.query(
-      `WITH og AS (
-         SELECT COALESCE(settings->'Output_Grades','{}'::jsonb) AS og
-         FROM ${table} LIMIT 1
-       )
-       SELECT ARRAY(
-         SELECT key FROM jsonb_each_text((SELECT og FROM og)) WHERE value = 'Active'
-       ) AS active;`
+      `
+      WITH og AS (
+        SELECT COALESCE(settings->'Output_Grades','{}'::jsonb) AS og
+        FROM ${table}
+        LIMIT 1
+      )
+      SELECT ARRAY(
+        SELECT e.key
+        FROM jsonb_each((SELECT og FROM og)) AS e(key, v)
+        WHERE lower(
+          CASE
+            WHEN jsonb_typeof(v) = 'string'
+              THEN btrim(v::text, '"')              -- "Active" -> Active
+            WHEN jsonb_typeof(v) = 'object'
+              THEN COALESCE(v->>'status', '')       -- { status: "Active", ... }
+            ELSE ''
+          END
+        ) = 'active'
+      ) AS active;
+      `
     );
     const activeSet = new Set(activeRes.rows[0].active || []);
     const invalid = grades.filter(g => !activeSet.has(g));
@@ -729,7 +776,7 @@ router.get("/quality-params/all", authenticate, async (req, res) => {
       }
       // include a default fallback (CTC only)
       aliasMap["__DEFAULT__"] = norm(["CTC"]);
-
+      console.log(aliasMap,includeInactive);
       return res.json({ success: true, data: aliasMap, meta: { includeInactive } });
     } finally {
       res.locals && res.locals.clientReleased ? null : client.release();
@@ -739,6 +786,81 @@ router.get("/quality-params/all", authenticate, async (req, res) => {
     return res.status(500).json({ success: false, error: "Internal server error" });
   }
 });
+
+router.get("/quality-params/metrics", authenticate, async (req, res) => {
+  const STEP = 0.01;
+
+  // Convert strings or partial objects to full metric objects; preserve order; no filtering
+  const norm = (list) => {
+    if (!Array.isArray(list)) list = [];
+    return list.map((item) => {
+      if (typeof item === "string") {
+        return { key: item, label: item, min: 0, max: 100, step: STEP };
+      }
+      const key = item?.key ?? item?.label ?? "CTC";
+      return {
+        key,
+        label: item?.label ?? key,
+        min: Number.isFinite(item?.min) ? item.min : 0,
+        max: Number.isFinite(item?.max) ? item.max : 100,
+        step: Number.isFinite(item?.step) ? item.step : STEP,
+      };
+    });
+  };
+
+  const { accountid } = req.user || {};
+  const includeInactive = ["1", "true", "yes"].includes(
+    String(req.query.includeInactive || "").toLowerCase()
+  );
+  const table = `${accountid}_settings`;
+
+  try {
+    const client = await pool.connect();
+    try {
+      const { rows } = await client.query(`SELECT settings FROM ${table} FOR SHARE LIMIT 1;`);
+      const settings = rows?.[0]?.settings || {};
+      const grades = settings?.Output_Grades || {};
+
+      // Build: gradeName -> quality params (ignore alias completely)
+      const gradeMap = {};
+      for (const [gradeName, v] of Object.entries(grades)) {
+        // v can be a string ("Active") or an object
+        let status = "";
+        let quality = [];
+        if (typeof v === "string") {
+          status = v;
+          quality = [];
+        } else if (v && typeof v === "object") {
+          status = v.status || "";
+          quality = Array.isArray(v.quality) ? v.quality : [];
+        } else {
+          continue;
+        }
+
+        // Skip de-active unless explicitly requested
+        if (!includeInactive && String(status).toLowerCase() === "de-active") continue;
+
+        const normalized = norm(quality);
+        // If a grade has no defined quality list, return CTC as a sensible default
+        gradeMap[gradeName] = normalized.length
+          ? normalized
+          : [{ key: "CTC", label: "CTC", min: 0, max: 100, step: STEP }];
+      }
+
+      if (!gradeMap.__DEFAULT__) {
+        gradeMap.__DEFAULT__ = [{ key: "CTC", label: "CTC", min: 0, max: 100, step: STEP }];
+      }
+
+      return res.json({ success: true, data: gradeMap, meta: { includeInactive } });
+    } finally {
+      res.locals && res.locals.clientReleased ? null : client.release();
+    }
+  } catch (err) {
+    console.error("GET /api/settings/quality-params/all failed:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+});
+
 
 module.exports = router;
 

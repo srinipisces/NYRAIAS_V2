@@ -278,7 +278,7 @@ router.get('/rms-loss-last30', authenticate, async (req, res) => {
           inward_number,
           outward_status_upddt,
           -- alias the awkward column name:
-          ("rms_total_loss_with_supplier_wieght/our_weight")::numeric AS rms_total_loss_pct
+          ("rms_total_loss/supplier_weight")::numeric AS rms_total_loss_pct
         FROM ${viewName}
         WHERE outward_status_upddt >= NOW() - INTERVAL '30 days'
         and inward_number not in ('I-1017','I-1012','I-1011','I-1013','I-1009')

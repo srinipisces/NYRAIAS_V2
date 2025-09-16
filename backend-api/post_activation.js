@@ -16,21 +16,15 @@ let dbConnected = false;
 const { authenticate } = require('./authenticate.js');
 
 
-router.get("/re_process", authenticate, async (req, res) => {
-  const { accountid } = req.user;
-  const table = `${accountid}_screening_outward`;
-  const table1 = `${accountid}_destoning`;
-
+router.get("/bags_to_process", authenticate,async (req, res) => {
+  const {accountid} = req.user;
+  const table = `${accountid}_postactivaton_process_view`;
+  const {tabName} = req.query;
+   
   try {
     const result = await pool.query(
-      `SELECT bag_no, weight,screening_out_dt
-       FROM ${table}
-       WHERE delivery_status = 'Re-Processing'
-       
-       union
-       select ds_bag_no as bag_no,weight_out as weight,bag_generated_timestamp as screening_out_dt
-       from ${table1} where final_destination = 'Re-Processing' 
-       ORDER BY screening_out_dt  
+      `select bag_no,bag_weight as weight,grade,bag_no_created_dttm as screening_out_dt from ${table} 
+      where stock_status='${tabName}' order by bag_no_created_dttm
        `
        
     );
@@ -48,17 +42,28 @@ function assertSafeIdent(id) {
 
 router.get('/status',authenticate,async (req, res) => {
     const { accountid } = req.user || {};
+    const { tabName } = req.query;
+    const TAB_TO_MACHINE = {
+      Screening: 'screening',
+      Crushing: 'crushing',
+      'De-Dusting': 'de_dusting',
+      'De-Magnetize': 'de_magnetize',
+      Blending: 'blending',
+      Packaging: 'packaging',
+    };
+    const machine = TAB_TO_MACHINE[tabName];
+  
     try { assertSafeIdent(accountid); } catch {
       return res.status(400).json({ error: 'Invalid account id' });
     }
 
-    const rpTable  = `${accountid}_re_process`;
-    const outTable = `${accountid}_re_process_out`;
+    const rpTable  = `${accountid}_${machine}_in`;
+    const outTable = `${accountid}_${machine}_out`;
 
     try {
       // 1) Active lot (NULL total_out_weight => machine busy)
       const { rows: activeRows } = await pool.query(
-        `SELECT lot_id, loaded_dttm, loaded_bag_details, loaded_weight,
+        `SELECT lot_id, loaded_dttm, loaded_bags as loaded_bag_details, loaded_weight,
                 bags_loaded_userid, total_out_weight, bags_out_datetime, bags_out_userid
            FROM ${rpTable}
           WHERE total_out_weight IS NULL
@@ -141,19 +146,32 @@ router.post('/createlabel', authenticate, checkAccess('Operations.Re-Process'), 
 
   const { lot_id, bag_weight, grade } = req.body || {};
   const weightNum = Number(bag_weight);
+  const { tabName } = req.query;
+  const TAB_TO_MACHINE = {
+      Screening: 'screening',
+      Crushing: 'crushing',
+      'De-Dusting': 'de_dusting',
+      'De-Magnetize': 'de_magnetize',
+      Blending: 'blending',
+      Packaging: 'packaging',
+    };
+    const machine = TAB_TO_MACHINE[tabName];
 
   if (!lot_id || typeof lot_id !== 'string' || !lot_id.trim()) {
+    console.log(lot_id, bag_weight, grade);
     return res.status(400).json({ error: 'lot_id is required' });
   }
   if (!grade || typeof grade !== 'string' || !grade.trim()) {
+    console.log(lot_id, bag_weight, grade);
     return res.status(400).json({ error: 'grade is required' });
   }
   if (!Number.isFinite(weightNum) || weightNum <= 0) {
+    console.log(lot_id, bag_weight, grade);
     return res.status(400).json({ error: 'bag_weight must be a positive number' });
   }
 
-  const rpTable  = `${accountid}_re_process`;
-  const outTable = `${accountid}_re_process_out`;
+  const rpTable  = `${accountid}_${machine}_in`;
+  const outTable = `${accountid}_${machine}_out`;
 
   const client = await pool.connect();
   try {
@@ -184,6 +202,7 @@ router.post('/createlabel', authenticate, checkAccess('Operations.Re-Process'), 
   } catch (e) {
     await client.query('ROLLBACK');
     console.error('Create out bag failed:', e);
+    console.log(lot_id, bag_weight, grade);
     return res.status(500).json({ error: 'Failed to create output bag' });
   } finally {
     client.release();
@@ -205,8 +224,17 @@ router.post('/delete_bag', authenticate, checkAccess('Operations.Re-Process'), a
   if (!bag_no || typeof bag_no !== 'string' || !bag_no.trim()) {
     return res.status(400).json({ error: 'bag_no is required' });
   }
-
-  const outTable = `${accountid}_re_process_out`;
+  const { tabName } = req.query;
+  const TAB_TO_MACHINE = {
+      Screening: 'screening',
+      Crushing: 'crushing',
+      'De-Dusting': 'de_dusting',
+      'De-Magnetize': 'de_magnetize',
+      Blending: 'blending',
+      Packaging: 'packaging',
+    };
+    const machine = TAB_TO_MACHINE[tabName];
+  const outTable = `${accountid}_${machine}_out`;
 
   try {
     // Delete by bag_no only
@@ -247,9 +275,19 @@ router.post('/move_to_stock', authenticate, checkAccess('Operations.Re-Process')
   if (!lot_id || typeof lot_id !== 'string' || !lot_id.trim()) {
     return res.status(400).json({ error: 'lot_id is required' });
   }
+  const { tabName } = req.query;
+  const TAB_TO_MACHINE = {
+      Screening: 'screening',
+      Crushing: 'crushing',
+      'De-Dusting': 'de_dusting',
+      'De-Magnetize': 'de_magnetize',
+      Blending: 'blending',
+      Packaging: 'packaging',
+    };
+    const machine = TAB_TO_MACHINE[tabName];
 
-  const rpTable  = `${accountid}_re_process`;
-  const outTable = `${accountid}_re_process_out`;
+  const rpTable  = `${accountid}_${machine}_in`;
+  const outTable = `${accountid}_${machine}_out`;
 
   const client = await pool.connect();
   try {
@@ -307,7 +345,7 @@ router.post('/move_to_stock', authenticate, checkAccess('Operations.Re-Process')
     // 4) Mark all out-bags as InStock
     await client.query(
       `UPDATE ${outTable}
-          SET stock_status = 'InStock',
+          SET stock_status = 'Quality',
               stock_change_userid = $2
         WHERE lot_id = $1`,
       [lot_id, userid]
@@ -362,105 +400,143 @@ router.post('/move_to_stock', authenticate, checkAccess('Operations.Re-Process')
  *      if bag_no starts with 'D' → <accountid>_destoning.final_destination = 'Re-Processed'
  *  - Returns: { success, lot: { lot_id, ... }, updated: { screening, destoning } }
  */
-router.post('/load_bags', authenticate, checkAccess('Operations.Re-Process'), async (req, res) => {
-  
-  function assertSafeIdent(ident) {
-    if (!/^[a-z0-9_]+$/i.test(ident)) throw new Error('unsafe ident');
-  }
-  const { accountid, userid } = req.user || {};
-  try { assertSafeIdent(accountid); } catch {
-    return res.status(400).json({ error: 'Invalid account id' });
-  }
-
-  // Accept "bags" (preferred) or "loaded_bag_details" for flexibility
-  const incoming = Array.isArray(req.body?.bags)
-    ? req.body.bags
-    : (Array.isArray(req.body?.loaded_bag_details) ? req.body.loaded_bag_details : []);
-
-  if (!Array.isArray(incoming) || incoming.length === 0) {
-    return res.status(400).json({ error: 'No bags provided.' });
-  }
-
-  // Normalize + validate (NO created_dttm here)
-  const details = [];
-  let totalWeight = 0;
-  for (const b of incoming) {
-    const bag_no = (b?.bag_no || '').trim();
-    const w = Number(b?.weight);
-    if (!bag_no) {
-      return res.status(400).json({ error: 'Each bag must have a bag_no.' });
+router.post(
+  '/load_bags',
+  authenticate,
+  checkAccess('Operations.PostActivation'),
+  async (req, res) => {
+    function assertSafeIdent(ident) {
+      if (!/^[a-z0-9_]+$/i.test(ident)) throw new Error('unsafe ident');
     }
-    if (!Number.isFinite(w) || w <= 0) {
-      return res.status(400).json({ error: `Invalid weight for bag ${bag_no}.` });
+
+    const { accountid, userid } = req.user || {};
+    const { tabName } = req.query || {};
+    try { assertSafeIdent(accountid); } catch {
+      return res.status(400).json({ error: 'Invalid account id' });
     }
-    details.push({ bag_no, weight: w });
-    totalWeight += w;
-  }
+    if (!tabName) return res.status(400).json({ error: 'Missing tabName' });
 
-  const rpTable        = `${accountid}_re_process`;
-  const outScreenTable = `${accountid}_screening_outward`;
-  const destoningTable = `${accountid}_destoning`;
+    // Tab label -> machine key for "<accountid>_<machine>_in"
+    const TAB_TO_MACHINE = {
+      Screening: 'screening',
+      Crushing: 'crushing',
+      'De-Dusting': 'de_dusting',
+      'De-Magnetize': 'de_magnetize',
+      Blending: 'blending',
+      Packaging: 'packaging',
+    };
+    const machine = TAB_TO_MACHINE?.[tabName];
+    if (!machine) return res.status(400).json({ error: 'Invalid tabName' });
 
-  // Split by source prefix (case-insensitive)
-  const sBags = details.map(d => d.bag_no).filter(b => /^s/i.test(b));
-  const dBags = details.map(d => d.bag_no).filter(b => /^d/i.test(b));
+    // Accept "bags" or "loaded_bag_details"
+    const incoming = Array.isArray(req.body?.bags)
+      ? req.body.bags
+      : (Array.isArray(req.body?.loaded_bag_details) ? req.body.loaded_bag_details : []);
+    if (!incoming.length) return res.status(400).json({ error: 'No bags provided.' });
 
-  const client = await pool.connect();
-  try {
-    await client.query('BEGIN');
+    // Normalize & validate
+    const details = [];
+    let totalWeight = 0;
+    for (const b of incoming) {
+      const bag_no = (b?.bag_no || '').trim();
+      const w = Number(b?.weight);
+      if (!bag_no) return res.status(400).json({ error: 'Each bag must have a bag_no.' });
+      if (!Number.isFinite(w) || w <= 0) {
+        return res.status(400).json({ error: `Invalid weight for bag ${bag_no}.` });
+      }
+      const grade = (b?.grade ?? null);
+      details.push({ bag_no, weight: w, grade });
+      //details.push({ bag_no, weight: w });
+      totalWeight += w;
+    }
 
-    // Prevent double-start if a lot is already active
-    const { rows: active } = await client.query(
-      `SELECT 1 FROM ${rpTable} WHERE total_out_weight IS NULL LIMIT 1`
-    );
-    if (active.length > 0) {
+    // Target "in" table
+    const rpTable = `${accountid}_${machine}_in`;
+
+    // Prefix -> { table, id column, STATUS COLUMN }
+    // DSO uses final_destination; all others use stock_status
+    const SRC_BY_PREFIX = {
+      DSO: { table: `${accountid}_destoning`,        id_col: 'ds_bag_no', status_col: 'final_destination' },
+      SCR: { table: `${accountid}_screening_out`,    id_col: 'bag_no',    status_col: 'stock_status'      },
+      CRU: { table: `${accountid}_crushing_out`,     id_col: 'bag_no',    status_col: 'stock_status'      },
+      DDU: { table: `${accountid}_de_dusting_out`,   id_col: 'bag_no',    status_col: 'stock_status'      },
+      DMZ: { table: `${accountid}_de_magnetize_out`, id_col: 'bag_no',    status_col: 'stock_status'      },
+      BLD: { table: `${accountid}_blending_out`, id_col: 'bag_no',    status_col: 'stock_status'      },
+    };
+
+    // Group bag_nos by prefix
+    const groups = { DSO: [], SCR: [], CRU: [], DDU: [], DMZ: [],BLD: [], _unknown: [] };
+    for (const { bag_no } of details) {
+      const up = bag_no.toUpperCase();
+      if      (up.startsWith('DSO')) groups.DSO.push(bag_no);
+      else if (up.startsWith('SCR')) groups.SCR.push(bag_no);
+      else if (up.startsWith('CRU')) groups.CRU.push(bag_no);
+      else if (up.startsWith('DDU')) groups.DDU.push(bag_no);
+      else if (up.startsWith('DMZ')) groups.DMZ.push(bag_no);
+      else if (up.startsWith('BLD')) groups.BLD.push(bag_no);
+      else groups._unknown.push(bag_no);
+    }
+
+    const statusValue = `${tabName}_loaded`; // e.g., "Screening_loaded"
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Prevent double-start if a lot is already active
+      const { rows: active } = await client.query(
+        `SELECT 1 FROM ${rpTable} WHERE total_out_weight IS NULL LIMIT 1`
+      );
+      if (active.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Machine is busy with an active lot.' });
+      }
+
+      // Insert lot (schema default handles loaded_dttm)
+      // If your column is "loaded_bags" instead of "loaded_bag_details", swap it here.
+      const insertSql = `
+        INSERT INTO ${rpTable} (loaded_bags, loaded_weight, bags_loaded_userid)
+        VALUES ($1::jsonb, $2, $3)
+        RETURNING lot_id, loaded_dttm, loaded_weight, loaded_bags, bags_loaded_userid
+      `;
+      const { rows: lotRows } = await client.query(insertSql, [
+        JSON.stringify(details), totalWeight, userid
+      ]);
+      const lot = lotRows[0];
+
+      // Mark source bags unavailable (per table’s status column)
+      const updatedCounts = { DSO: 0, SCR: 0, CRU: 0, DDU: 0, DMZ: 0 };
+      for (const prefix of Object.keys(SRC_BY_PREFIX)) {
+        const bagList = groups[prefix];
+        if (!bagList.length) continue;
+
+        const { table, id_col, status_col } = SRC_BY_PREFIX[prefix];
+        const sql = `
+          UPDATE ${table}
+             SET ${status_col} = $1
+           WHERE ${id_col} = ANY($2)
+        `;
+        const r = await client.query(sql, [statusValue, bagList]);
+        updatedCounts[prefix] = r.rowCount || 0;
+      }
+
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        lot,
+        updated: updatedCounts,
+        unknown_prefix: groups._unknown
+      });
+    } catch (err) {
       await client.query('ROLLBACK');
-      return res.status(409).json({ error: 'Machine is busy with an active lot.' });
+      console.error('load_bags failed:', err);
+      return res.status(500).json({ error: 'Failed to start re-process (load bags).' });
+    } finally {
+      client.release();
     }
-
-    // Insert new lot (loaded_dttm defaults to CURRENT_TIMESTAMP in schema)
-    const insertSql = `
-      INSERT INTO ${rpTable} (loaded_bag_details, loaded_weight, bags_loaded_userid)
-      VALUES ($1::jsonb, $2, $3)
-      RETURNING lot_id, loaded_dttm, loaded_weight, loaded_bag_details, bags_loaded_userid
-    `;
-    const { rows: lotRows } = await client.query(insertSql, [
-      JSON.stringify(details), totalWeight, userid
-    ]);
-    const lot = lotRows[0];
-
-    // Update sources
-    if (sBags.length) {
-      await client.query(
-        `UPDATE ${outScreenTable}
-            SET delivery_status = 'Re-Processed'
-          WHERE bag_no = ANY($1)`,
-        [sBags]
-      );
-    }
-    if (dBags.length) {
-      await client.query(
-        `UPDATE ${destoningTable}
-            SET final_destination = 'Re-Processed'
-          WHERE ds_bag_no = ANY($1)`,
-        [dBags]
-      );
-    }
-
-    await client.query('COMMIT');
-    res.json({
-      success: true,
-      lot,
-      updated: { screening: sBags.length, destoning: dBags.length }
-    });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('load_bags failed:', err);
-    res.status(500).json({ error: 'Failed to start re-process (load bags).' });
-  } finally {
-    client.release();
   }
-});
+);
+
 
 
 router.get("/bags", authenticate, async (req, res) => {
@@ -488,6 +564,7 @@ router.get("/bags", authenticate, async (req, res) => {
       return res.status(400).json({ success: false, error: "Invalid bucket value" });
     }
 
+    
     const table = `${accountid}_${suffix}_out`;
 
     // Optional: check that the table exists to return a clean 404 instead of a PG error
@@ -504,7 +581,7 @@ router.get("/bags", authenticate, async (req, res) => {
     `;
 
     const result = await pool.query(sql);
-    console.log(result.rows);
+    
     return res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error("Error fetching post_activation bags:", err);
@@ -512,7 +589,213 @@ router.get("/bags", authenticate, async (req, res) => {
   }
 });
 
+
+
+
+
+/**
+ * POST /api/post_activation/quality_save
+ * Body:
+ *  - bucket: string (required)
+ *  - bag_no or id: string (required)
+ *  - quality: object (JSON) (required)
+ *  - remarks: string (optional)
+ *  - next_destination: string (required)
+ */
+router.post("/quality_save", authenticate, async (req, res) => {
+  const { accountid, userid} = req.user || {};
+  const {
+    bucket,
+    bag_no,
+    id: idAlt,
+    quality,
+    remarks = null,
+    next_destination,
+  } = req.body || {};
+  // Normalize "De-Dusting" / "De Dusting" / "De_Dusting" -> "de_dusting"
+    function normalizeBucketToSuffix(bucket = "") {
+      return String(bucket)
+        .toLowerCase()
+        .replace(/[-\s]+/g, "_")
+        .replace(/[^a-z0-9_]/g, "")
+        .replace(/_+/g, "_")
+        .replace(/^_+|_+$/g, "");
+    }
+
+    
+  try {
+    // Validate inputs
+    if (!accountid) {
+      return res.status(400).json({ success: false, error: "Missing account context" });
+    }
+    if (!bucket) {
+      return res.status(400).json({ success: false, error: "Missing 'bucket'" });
+    }
+    const bagNo = bag_no || idAlt;
+    if (!bagNo) {
+      return res.status(400).json({ success: false, error: "Missing 'bag_no' (or 'id')" });
+    }
+    if (quality == null || typeof quality !== "object") {
+      return res.status(400).json({ success: false, error: "'quality' must be a JSON object" });
+    }
+    if (!next_destination) {
+      return res.status(400).json({ success: false, error: "Missing 'next_destination'" });
+    }
+
+    // Normalize bucket -> table suffix
+    const suffix = normalizeBucketToSuffix(bucket);
+    if (!/^[a-z0-9_]{2,64}$/.test(suffix)) {
+      return res.status(400).json({ success: false, error: "Invalid 'bucket' format" });
+    }
+    const table = `${accountid}_${suffix}_out`;
+
+    const client = await pool.connect();
+    try {
+      // Ensure table exists
+      const existsQ = await client.query("SELECT to_regclass($1) AS reg;", [table]);
+      if (!existsQ.rows[0]?.reg) {
+        return res.status(404).json({ success: false, error: `Bucket table not found: ${table}` });
+      }
+
+      const qualityJson = JSON.stringify(quality);
+      // Build UPDATE (identifiers interpolated after validation; values parameterized)
+      const sql = `
+        UPDATE ${table}
+        SET
+          quality           = $1::jsonb,
+          quality_userid    = $2,
+          stock_status       = $3,
+          quality_upd_dttime  = CURRENT_TIMESTAMP,
+          remarks           = $4
+        WHERE bag_no = $5
+        RETURNING bag_no, stock_status AS stock_status, quality, remarks, quality_userid, quality_upd_dttime;
+      `;
+
+      const params = [qualityJson, userid, next_destination, remarks, bagNo];
+      console.log(params);
+      const result = await client.query(sql, params);
+
+      if (result.rowCount === 0) {
+        return res.status(404).json({ success: false, error: `Bag not found: ${bagNo}` });
+      }
+
+      return res.json({ success: true, data: result.rows[0] });
+    } finally {
+      client.release();
+    }
+  } catch (err) {
+    console.error("POST /api/post_activation/quality_save failed:", err);
+    return res.status(500).json({ success: false, error: "Internal server error" });
+  }
+});
+
+// GET /api/records?key=destoning&sort=ds_bag_no&dir=desc
+router.get("/records", authenticate, async (req, res) => {
+  const { accountid } = req.user || {};
+  if (!accountid) return res.status(401).json({ error: "Unauthorized" });
+
+  const key = String(req.query.key || "").toLowerCase().trim();
+  const VALID_KEYS = new Set(["destoning", "screening", "blending", "de_dusting", "de_magnetize"]);
+  if (!VALID_KEYS.has(key)) return res.status(400).json({ error: "Invalid or missing key" });
+
+  const dir = String(req.query.dir || "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
+  try {
+    if (key === "destoning") {
+      // ---- De-Stoning: different schema/columns ----
+      const table = `${accountid}_destoning`;
+
+      // Columns tailored for destoning
+      const columns = [
+        "ds_bag_no",
+        "loaded_weight",
+        "weight_out",
+        "final_destination",
+        "quality",
+      ];
+
+      // Safe sort for destoning
+      const ALLOWED_SORT = new Set(["ds_bag_no", "weight_out", "loaded_weight"]);
+      const sort = ALLOWED_SORT.has(String(req.query.sort)) ? String(req.query.sort) : "ds_bag_no";
+
+      const sql = `
+        SELECT
+          ds_bag_no,
+          loaded_weight,
+          weight_out,
+          final_destination,
+          quality
+        FROM ${table}
+        WHERE ds_bag_no IS NOT NULL
+          AND (final_destination IS DISTINCT FROM 'Packaging')
+        ORDER BY ${sort} ${dir};
+      `;
+
+      const { rows } = await pool.query(sql);
+      return res.json({ columns, rows });
+    }
+
+    // ---- Generic *_out tables: screening/blending/dedusting/demagnetize ----
+    const table = `${accountid}_${key}_out`;
+
+    // UI-friendly column names (aliasing where needed)
+    const columns = [
+      "lot_id",
+      "bag_no",
+      "weight",
+      "grade",
+      "created_at",
+      "status",
+      "bag_created_userid",
+      "stock_change_userid",
+      "stock_change_dttime",
+      "quality",
+      "quality_userid",
+      "quality_upd_dttime",
+      "remarks",
+    ];
+
+    // Safe sort for generic tables
+    const ALLOWED_SORT = new Set(["bag_no_created_dttm", "bag_no", "grade", "stock_status", "lot_id"]);
+    const sort = ALLOWED_SORT.has(String(req.query.sort))
+      ? String(req.query.sort)
+      : "bag_no_created_dttm";
+
+    const sql = `
+      SELECT
+        lot_id,
+        bag_no,
+        bag_weight            AS weight,
+        grade,
+        bag_no_created_dttm   AS created_at,
+        stock_status          AS status,
+        bag_created_userid,
+        stock_change_userid,
+        stock_change_dttime,
+        quality,
+        quality_userid,
+        quality_upd_dttime,
+        COALESCE(remarks,'')  AS remarks
+      FROM ${table}
+      WHERE stock_status <> 'Packaging'
+      ORDER BY ${sort} ${dir};
+    `;
+
+    const { rows } = await pool.query(sql);
+    return res.json({ columns, rows });
+  } catch (err) {
+    if (/relation .* does not exist/i.test(err?.message || "")) {
+      return res.status(404).json({ error: `Table not found for key "${key}"` });
+    }
+    console.error("Error fetching process records:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+
 module.exports = router;
+
+
 
 
 

@@ -302,7 +302,7 @@ router.post("/complete", authenticate, async (req, res) => {
       `UPDATE ${table}
        SET ds_bag_no = $1,
            weight_out = $2,
-           final_destination = '',
+           final_destination = 'Quality',
            bag_generated_timestamp = CURRENT_TIMESTAMP
        WHERE ds_bag_no IS NULL AND loaded_bags @> $3::text[]`,
       [newBagNo, weight_out, loaded_bags]

@@ -76,14 +76,17 @@ router.post('/login', async (req, res) => {
       'INSERT INTO active_tokens (token, userid, accountid, expires_at) VALUES ($1, $2, $3, $4)',
       [token, userid, accountid, expiresAt]
     );
-
+    
     // 5. Set token cookie and send response
     res
       .cookie('token', token, {
         httpOnly: true,
-        secure: false, // true in production with HTTPS
-        sameSite: 'Strict',
+        secure: true, // true in production with HTTPS
+        sameSite: 'Lax',
         maxAge: 8 * 3600 * 1000, // 8 hours
+        domain: '.nyraias.com',
+        path: '/',
+      
       })
       .json({
         success: true,
@@ -104,19 +107,21 @@ router.post('/login', async (req, res) => {
 //validate token
 router.get('/validate-token', authenticate, async (req, res) => {
   const token = req.cookies.token;
-
+  
   if (!token) {
-    console.log('❌ No token in cookie');
+   
     res.clearCookie('token', {
       httpOnly: true,
-      secure: false,
+      secure: true,
       sameSite: 'Lax',
+      path: '/',
+      domain: '.nyraias.com',
     });
     return res.status(401).json({ message: 'No token provided' });
   }
 
   const { userid, accountid, access } = req.user;
-
+  
   try {
     const result = await pool.query(
       'SELECT 1 FROM active_tokens WHERE token = $1 AND userid = $2 AND accountid = $3',
@@ -124,11 +129,13 @@ router.get('/validate-token', authenticate, async (req, res) => {
     );
 
     if (result.rows.length === 0) {
-      console.log('❌ Token not found in active_tokens table');
+      
       res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
+        secure: true,
         sameSite: 'Lax',
+        path: '/',
+        domain: '.nyraias.com',
       });
       return res.status(401).json({ message: 'Token is no longer active' });
     }
@@ -155,7 +162,7 @@ router.get('/validate-token', authenticate, async (req, res) => {
     console.error('Token validation error:', err);
     res.clearCookie('token', {
       httpOnly: true,
-      secure: false,
+      secure: true,
       sameSite: 'Lax',
     });
     res.status(500).json({ message: 'Server error validating token' });
@@ -457,7 +464,7 @@ router.post('/logout', authenticate, async (req, res) => {
     res.clearCookie('token', {
       httpOnly: true,
       sameSite: 'Strict',
-      secure: false, // if using HTTPS
+      secure: true, // if using HTTPS
     });
 
     res.json({ message: 'Logged out successfully' });

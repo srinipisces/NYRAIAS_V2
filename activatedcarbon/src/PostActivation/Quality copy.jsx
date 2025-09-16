@@ -1,10 +1,10 @@
 // src/Operations/Re_Process_Quality.jsx
 import React, { useMemo, useState, useEffect } from "react";
 import {
-  Box, Card, CardHeader, CardContent, Typography, Button, Grid, TextField, Chip,
+  Box, Card, CardHeader, CardContent, Typography, Button,TextField, Chip,
   Divider, Stack, IconButton, Paper, InputAdornment, GlobalStyles, List,
   ListItemButton, ListItemText, ListItemIcon, FormControl, InputLabel, Select, MenuItem,
-  Alert, LinearProgress
+  Alert, LinearProgress, Snackbar
 } from "@mui/material";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
@@ -12,7 +12,10 @@ import SearchIcon from "@mui/icons-material/Search";
 import Inventory2OutlinedIcon from "@mui/icons-material/Inventory2Outlined";
 import SaveIcon from "@mui/icons-material/Save";
 import RefreshIcon from "@mui/icons-material/Refresh";
+import CircularProgress from "@mui/material/CircularProgress";
 import axios from "axios";
+import Grid from '@mui/material/GridLegacy';
+
 
 const DECIMAL_PLACES = 2;
 const STEP = 0.01;
@@ -22,12 +25,12 @@ const API = import.meta.env.VITE_API_URL;
 const DEFAULT_METRICS = [{ key: "CTC", label: "CTC", min: 0, max: 100, step: STEP }];
 
 // Buckets (UI labels unchanged)
-const BUCKETS = ["Destoning","Crushing","Blending","Screening","De-Magnetize","De-Dusting"];
+const BUCKETS = ["De-Stoning","Crushing","Blending","Screening","De-Magnetize","De-Dusting"];
 
 // dropdown options (unchanged)
 const NEXT_DEST_OPTIONS = [
-  "DeStoning", "Screening", "Crushing", "De-Dusting",
-  "De-Magnetizing", "Blending", "Packaging", "InStock"
+  "De-Stoning", "Screening", "Crushing", "De-Dusting",
+  "De-Magnetize", "Blending", "Packaging", "InStock"
 ];
 
 const formatNum = (n) => (Number.isFinite(n) ? n.toFixed(DECIMAL_PLACES) : (0).toFixed(DECIMAL_PLACES));
@@ -36,22 +39,6 @@ const clampRound2 = (value, min = 0, max = 100) => {
   const clamped = Math.max(min, Math.min(max, num));
   return Math.round(clamped * 100) / 100;
 };
-
-// turn "De-Dusting" / "De Dusting" / "De_Dusting" -> "de_dusting"
-// turn "De-Magnetize" / "De Magmetize" -> "de_magnetize" (also handles the earlier typo)
-const toBucketParam = (label = "") => {
-  let s = String(label).trim().toLowerCase();
-  // normalize separators to underscore
-  s = s.replace(/[-\s]+/g, "_");
-  // keep only a-z, 0-9, and underscore
-  s = s.replace(/[^a-z0-9_]/g, "");
-  // collapse multiple underscores and trim
-  s = s.replace(/_+/g, "_").replace(/^_+|_+$/g, "");
-  // optional alias fix for earlier typo used in UI labels
-  if (s === "de_magmetize") s = "de_magnetize";
-  return s;
-};
-
 
 // Parse alias from: <PREFIX>_<ALIAS>_<DDMMYY>_<RUNNING>
 function parseAliasFromBagId(id = "") {
@@ -96,12 +83,12 @@ export default function Re_Process_Quality() {
 
   const [q, setQ] = useState("");
 
-  // -------- Data: bags (from /api/post_activation/bags?bucket=...) ----------
+  // -------- Data: bags ----------
   const [bags, setBags] = useState([]);
   const [bagsLoading, setBagsLoading] = useState(false);
   const [bagsError, setBagsError] = useState("");
 
-  // -------- Data: all alias metrics (from /api/settings/quality-params/all) ----------
+  // -------- Data: all alias metrics ----------
   const [aliasMap, setAliasMap] = useState({ __DEFAULT__: DEFAULT_METRICS });
   const [aliasMapLoading, setAliasMapLoading] = useState(false);
   const [aliasMapError, setAliasMapError] = useState("");
@@ -110,20 +97,15 @@ export default function Re_Process_Quality() {
   const [refreshing, setRefreshing] = useState(false);
   const busy = aliasMapLoading || bagsLoading || refreshing;
 
-  // Filter bags for current bucket & search
+  // selected + search
   const visible = useMemo(
-    () =>
-      bags.filter(
-        (b) =>
-          (b.stage || "").toLowerCase() === currentBucket.toLowerCase() &&
-          (!q || (b.id || "").toLowerCase().includes(q.toLowerCase()))
-      ),
-    [bags, currentBucket, q]
+    () => bags.filter(b => !q || (b.id || "").toLowerCase().includes(q.toLowerCase())),
+    [bags, q]
   );
+    
 
-  // selected bag
   const [index, setIndex] = useState(0);
-  useEffect(() => setIndex(0), [currentBucket, q, bags.length]);
+  useEffect(() => setIndex(0), [q, bags.length]);
   const selected = visible[index] ?? visible[0] ?? null;
   const canPrev = index > 0;
   const canNext = index < visible.length - 1;
@@ -141,9 +123,24 @@ export default function Re_Process_Quality() {
   );
   const [drafts, setDrafts] = useState({});
 
-  // Remarks + Next Destination
+  // Remarks + Next Destination + Saving + Snackbars
   const [remarks, setRemarks] = useState("");
   const [nextDestination, setNextDestination] = useState(NEXT_DEST_OPTIONS[0]);
+  const [saving, setSaving] = useState(false);
+  const [snack, setSnack] = useState({ open: false, message: "", severity: "success" });
+
+  // Next-destination options excluding the current bucket
+    const filteredNextDestOptions = React.useMemo(
+        () => NEXT_DEST_OPTIONS.filter(o => o !== currentBucket),
+        [currentBucket]
+      );
+     
+      // Keep nextDestination valid when bucket changes
+      useEffect(() => {
+        if (!filteredNextDestOptions.includes(nextDestination)) {
+          setNextDestination(filteredNextDestOptions[0] || "");
+        }
+      }, [filteredNextDestOptions, nextDestination]);
 
   // Keep values in sync with current metricsDef
   useEffect(() => {
@@ -219,19 +216,32 @@ export default function Re_Process_Quality() {
     }
   }, []);
 
-  // Fetch bags for a specific bucket
+  // Fetch bags for the current bucket (backend normalizes the name)
   const fetchBags = React.useCallback(async (bucketLabel) => {
     setBagsLoading(true);
     setBagsError("");
     try {
       const res = await axios.get(`${API}/api/post_activation/bags`, {
-        params: { bucket: bucketLabel },
+        params: { bucket: bucketLabel }, // pass raw label; BE normalizes
         withCredentials: true,
       });
-      if (!res?.data?.success || !Array.isArray(res?.data?.data)) {
-        throw new Error(res?.data?.error || "Invalid response");
-      }
-      setBags(res.data.data);
+
+      const payload = res?.data;
+      const rows = Array.isArray(payload)
+        ? payload
+        : (payload?.success && Array.isArray(payload?.data) ? payload.data : null);
+      if (!rows) throw new Error(payload?.error || "Invalid response");
+
+      const normalized = rows.map(r => {
+        const rawWeight = r.weightKg ?? r.weightkg ?? r.bag_weight ?? r.weight ?? 0;
+        return {
+          id: r.id ?? r.bag_no ?? r.bagno,
+          weightkg: Number(rawWeight) || 0,
+          grade: r.grade ?? r.quality_grade ?? null,
+        };
+      });
+
+      setBags(normalized);
     } catch (e) {
       console.error("Failed to fetch bags:", e);
       setBags([]);
@@ -259,25 +269,37 @@ export default function Re_Process_Quality() {
 
   // When user changes bucket, fetch that bucket’s bags
   useEffect(() => {
-    // Avoid double-fetch on very first mount (already handled by handleRefresh)
-    // We’ll still call fetchBags on subsequent bucket changes.
     fetchBags(currentBucket);
   }, [currentBucket, fetchBags]);
 
-  // Save payload (unchanged)
-  const handleSave = () => {
-    if (!selected || hasErrors || (aliasMapLoading || bagsLoading || refreshing)) return;
-    const payload = {
-      bucket: currentBucket,
-      bag_no: selected.id,
-      alias: alias ?? null,
-      metrics: values,
-      remarks,
-      next_destination: nextDestination,
+  // ---- Save quality ----
+   const handleSave = async () => {
+        if (!selected || hasErrors || aliasMapLoading || bagsLoading || saving) return;
+        try {
+                setSaving(true);
+                const payload = {
+                    bucket: currentBucket,        // raw label
+                    bag_no: selected.id,          // backend accepts bag_no (or id)
+                    quality: values,              // JSONB
+                    remarks,
+                    next_destination: nextDestination,
+                };
+                const res = await axios.post(`${API}/api/post_activation/quality_save`, payload, {
+                    withCredentials: true,
+                });
+                if (!res?.data?.success) throw new Error(res?.data?.error || "Save failed");
+                setSnack({ open: true, message: "Quality saved.", severity: "success" });
+
+            // 🔄 Refresh the current bucket's bags so the list reflects the update
+            await fetchBags(currentBucket);
+            // (No need to refresh quality params here.)
+        } catch (e) {
+              const msg = e?.response?.data?.error || e?.message || "Save failed";
+              setSnack({ open: true, message: msg, severity: "error" });
+        } finally {
+            setSaving(false);
+        }
     };
-    console.log("SAVE", payload);
-    // axios.post(`${API}/api/reprocess/save-quality`, payload, { withCredentials: true })
-  };
 
   // Disable everything interactive while busy
   const disableAll = busy;
@@ -313,7 +335,7 @@ export default function Re_Process_Quality() {
               </Stack>
 
               <Stack direction="row" justifyContent="center" spacing={1} alignItems="center">
-                {/* NEW: Refresh icon BEFORE No. of bags chip */}
+                {/* Refresh icon BEFORE No. of bags chip */}
                 <IconButton
                   size="small"
                   aria-label="Refresh data"
@@ -359,45 +381,44 @@ export default function Re_Process_Quality() {
                         <Inventory2OutlinedIcon fontSize="small" />
                       </ListItemIcon>
                       <ListItemText
-                            primary={
-                                <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-                                <Typography
-                                    fontWeight={800}
-                                    noWrap
-                                    sx={{
-                                    letterSpacing: 0.2,
-                                    // Smaller on big screens only; mobile unchanged
-                                    fontSize: { xs: 14, sm: 14, md: 13, lg: 12 },
-                                    }}
-                                >
-                                    {b.id}
-                                </Typography>
+                        primary={
+                          <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+                            <Typography
+                              fontWeight={800}
+                              noWrap
+                              sx={{
+                                letterSpacing: 0.2,
+                                fontSize: { xs: 14, sm: 14, md: 13, lg: 12 }, // smaller on big screens
+                              }}
+                            >
+                              {b.id}
+                            </Typography>
 
-                                {/* Chips inline with ID on md+ */}
-                                <Stack
-                                    direction="row"
-                                    spacing={1}
-                                    sx={{ display: { xs: "none", md: "inline-flex" }, ml: 1, flexShrink: 0 }}
-                                >
-                                    <Chip size="small" label={`${b.weightkg} kg`} />
-                                    <Chip size="small" label={`Grade ${b.grade}`} />
-                                </Stack>
-                                </Stack>
-                            }
-                            secondary={
-                                // Mobile view unchanged: chips on the next line
-                                <Stack
-                                direction="row"
-                                spacing={1}
-                                mt={0.5}
-                                sx={{ display: { xs: "flex", md: "none" } }}
-                                >
-                                <Chip size="small" label={`${b.weightkg} kg`} />
-                                <Chip size="small" label={`Grade ${b.grade}`} />
-                                </Stack>
-                            }
-                        />
-
+                            {/* Chips inline with ID on md+ */}
+                            <Stack
+                              direction="row"
+                              spacing={1}
+                              sx={{ display: { xs: "none", md: "inline-flex" }, ml: 1, flexShrink: 0 }}
+                            >
+                              <Chip size="small" label={`${b.weightkg} kg`} />
+                              <Chip size="small" label={`Grade ${b.grade}`} />
+                            </Stack>
+                          </Stack>
+                        }
+                        secondaryTypographyProps={{ component: 'div' }} 
+                        secondary={
+                          // Mobile view unchanged: chips on the next line
+                          <Stack
+                            direction="row"
+                            spacing={1}
+                            mt={0.5}
+                            sx={{ display: { xs: "flex", md: "none" } }}
+                          >
+                            <Chip size="small" label={`${b.weightkg} kg`} />
+                            <Chip size="small" label={`Grade ${b.grade}`} />
+                          </Stack>
+                        }
+                      />
                     </ListItemButton>
                   ))}
                   {visible.length === 0 && (
@@ -444,7 +465,7 @@ export default function Re_Process_Quality() {
 
           <Grid container spacing={1.75} alignItems="flex-start">
             {/* Dynamic Metrics grid */}
-            <Grid item xs={12} md={12} lg={8}>
+            <Grid size ={{xs:12, md:12, lg:8}}>
               <Box
                 sx={{
                   display: "grid",
@@ -488,7 +509,7 @@ export default function Re_Process_Quality() {
             </Grid>
 
             {/* Remarks + Next Destination + Save */}
-            <Grid item xs={12} md={12} lg={4}>
+            <Grid item xs={12} md={12} lg={4} >
               <Grid container spacing={1.25} alignItems="stretch">
                 {/* Remarks */}
                 <Grid item xs={12} md={8} lg={7}>
@@ -511,7 +532,7 @@ export default function Re_Process_Quality() {
                 </Grid>
 
                 {/* Dropdown + Save in ONE line */}
-                <Grid item xs={12} lg={5}>
+                <Grid item xs={12} md={5} lg={5}>
                   <Stack direction="row" spacing={1} alignItems="center" sx={{ minWidth: 0 }}>
                     <FormControl size="small" sx={{ flex: 1, minWidth: 0 }} disabled={disableAll}>
                       <InputLabel id="next-dest-label">Next Destination</InputLabel>
@@ -521,7 +542,7 @@ export default function Re_Process_Quality() {
                         value={nextDestination}
                         onChange={(e) => setNextDestination(e.target.value)}
                       >
-                        {NEXT_DEST_OPTIONS.map((opt) => (
+                        {filteredNextDestOptions.map((opt) => (
                           <MenuItem key={opt} value={opt}>{opt}</MenuItem>
                         ))}
                       </Select>
@@ -531,12 +552,12 @@ export default function Re_Process_Quality() {
                       size="small"
                       variant="contained"
                       color="success"
-                      endIcon={<SaveIcon />}
+                      endIcon={saving ? <CircularProgress size={16} /> : <SaveIcon />}
                       onClick={handleSave}
-                      disabled={!selected || hasErrors || disableAll}
+                      disabled={!selected || hasErrors || disableAll || saving}
                       sx={{ height: 40, px: 2, whiteSpace: "nowrap", flexShrink: 0 }}
                     >
-                      Save
+                      {saving ? "Saving…" : "Save"}
                     </Button>
                   </Stack>
                 </Grid>
@@ -545,6 +566,23 @@ export default function Re_Process_Quality() {
           </Grid>
         </CardContent>
       </Card>
+
+      {/* Snackbars */}
+      <Snackbar
+        open={snack.open}
+        autoHideDuration={3000}
+        onClose={() => setSnack(s => ({ ...s, open: false }))}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      >
+        <Alert
+          onClose={() => setSnack(s => ({ ...s, open: false }))}
+          severity={snack.severity}
+          variant="filled"
+          sx={{ width: "100%" }}
+        >
+          {snack.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 }

@@ -5,7 +5,11 @@ const JWT_SECRET = process.env.JWT_SECRET;
 
 const authenticate = async (req, res, next) => {
   // 🔍 Get token from cookie or Authorization header
-  const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
+  const header = req.get('authorization') || '';
+  const bearer = header.startsWith('Bearer ') ? header.slice(7) : null;
+  const token = req.cookies?.token || bearer;
+
+  //const token = req.cookies?.token || req.headers.authorization?.split(' ')[1];
 
   if (!token) {
     return res.status(401).json({ message: 'Missing or invalid token' });
@@ -25,8 +29,10 @@ const authenticate = async (req, res, next) => {
     if (result.rows.length === 0) {
       res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
+        secure: true,
         sameSite: 'Lax',
+        path:'/',
+        domain: '.nyraias.com',
       });
       return res.status(401).json({ message: 'Token expired or invalid' });
     }
@@ -37,8 +43,10 @@ const authenticate = async (req, res, next) => {
     console.error('Token verification failed:', err.message);
     res.clearCookie('token', {
         httpOnly: true,
-        secure: false,
+        secure: true,
         sameSite: 'Lax',
+        path:'/',
+        domain: '.nyraias.com'
       });
     return res.status(401).json({ message: 'Invalid or expired token' });
   }

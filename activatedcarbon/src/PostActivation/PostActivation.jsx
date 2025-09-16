@@ -1,26 +1,38 @@
 // src/Operations/PostActivation.jsx
 import * as React from 'react';
+import { Suspense } from 'react';
 import { Box, Paper, Tabs, Tab, GlobalStyles, Button, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 
-// ===== Lazy tabs (swap to your real files as needed) =====
-const LabTab           = React.lazy(() => import('./Re_Process_Quality'));
-const ScreeningTab     = React.lazy(() => import('./Re_Process'));
-const CrushingTab      = React.lazy(() => import('./Re_Process'));
-const DeDustingTab     = React.lazy(() => import('./Re_Process'));
-const DeMagnatizingTab = React.lazy(() => import('./Re_Process'));
-const BlendingTab      = React.lazy(() => import('./Re_Process'));
-const PackagingTab     = React.lazy(() => import('./Re_Process'));
+// Helper: lazy() + inject tabName
+const lazyWithTabName = (importer, tabName) =>
+  React.lazy(() =>
+    importer().then((mod) => ({
+      default: (props) => <mod.default tabName={tabName} {...props} />,
+    }))
+  );
 
+// Quality stays standalone (no props injected)
+const LabTab = React.lazy(() => import('./Quality'));
+
+// Load_Unload with just tabName baked in
+const ScreeningTab     = lazyWithTabName(() => import('./Load_Unload'), 'Screening');
+const CrushingTab      = lazyWithTabName(() => import('./Load_Unload'), 'Crushing');
+const DeDustingTab     = lazyWithTabName(() => import('./Load_Unload'), 'De-Dusting');
+const DeMagnatizingTab = lazyWithTabName(() => import('./Load_Unload'), 'De-Magnetize');
+const BlendingTab      = lazyWithTabName(() => import('./Load_Unload'), 'Blending');
+const StockTab     = lazyWithTabName(() => import('./ProcessRecords'), 'ProcessRecords');
+
+// Optional: your tab registry
 const TAB_ITEMS = [
-  { label: 'Lab',            Component: LabTab },
-  { label: 'Screening',      Component: ScreeningTab },
-  { label: 'Crushing',       Component: CrushingTab },
-  { label: 'De-Dusting',     Component: DeDustingTab },
-  { label: 'De-Magnatizing', Component: DeMagnatizingTab },
-  { label: 'Blending',       Component: BlendingTab },
-  { label: 'Packaging',      Component: PackagingTab },
+  { label: 'Quality',      key: 'quality',     Component: LabTab },
+  { label: 'Screening',    key: 'screening',   Component: ScreeningTab },
+  { label: 'Crushing',     key: 'crushing',    Component: CrushingTab },
+  { label: 'De-Dusting',   key: 'dedusting',   Component: DeDustingTab },
+  { label: 'De-Magnetize', key: 'demagnetize', Component: DeMagnatizingTab },
+  { label: 'Blending',     key: 'blending',    Component: BlendingTab },
+  { label: 'ProcessRecords',    key: 'processrecords',   Component: StockTab },
 ];
 
 const a11yProps = (i) => ({ id: `postact-tab-${i}`, 'aria-controls': `postact-tabpanel-${i}` });
@@ -184,8 +196,10 @@ export default function PostActivation() {
         }}
       >
         {TAB_ITEMS.map((t, i) => (
-          <TabPanel key={t.label} value={tab} index={i}>
-            <t.Component />
+          <TabPanel key={t.key} value={tab} index={i}>
+            <Suspense fallback={<div style={{ padding: 16 }}>Loading {t.label}…</div>}>
+              <t.Component />
+            </Suspense>
           </TabPanel>
         ))}
       </Box>

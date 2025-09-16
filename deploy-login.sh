@@ -4,8 +4,8 @@
 APP_NAME=login-app
 PEM_FILE=./SamCarbon.pem       # 🔁 Update this path
 SERVER_USER=ubuntu                    # ✅ Ubuntu confirmed
-SERVER_IP=ec2-16-171-240-125.eu-north-1.compute.amazonaws.com  # 🔁 Update this
-SERVER_PATH=/home/ubuntu/NYRAIAS/tenants/root
+SERVER_IP=ec2-13-53-148-190.eu-north-1.compute.amazonaws.com  # 🔁 Update this
+SERVER_PATH=/home/ubuntu/NYRAIAS_V2/tenants/root
 NGINX_CONTAINER=multi_tenant_nginx          # Docker container name
 
 # === Validations ===

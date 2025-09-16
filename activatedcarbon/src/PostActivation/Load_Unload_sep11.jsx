@@ -28,14 +28,15 @@ import DoneAllIcon from "@mui/icons-material/DoneAll";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LabelOutlinedIcon from "@mui/icons-material/LabelOutlined";
 import axios from "axios";
+import PrintLabelButton from "./PrintLabel";
 
 /* ------------------ API client (VITE_URL + cookies + error surfacing) ------------------ */
 const API_URL = import.meta.env.VITE_API_URL;
 const api = axios.create({ baseURL: API_URL || "/", withCredentials: true, timeout: 20000 });
-const LOAD_BAGS_URL = '/api/re_process/load_bags';
-const CREATE_LABEL_URL = '/api/re_process/createlabel';
-const DELETE_BAG_URL = '/api/re_process/delete_bag';
-const MOVE_TO_STOCK_URL = '/api/re_process/move_to_stock';
+const LOAD_BAGS_URL = '/api/post_activation/load_bags';
+const CREATE_LABEL_URL = '/api/post_activation/createlabel';
+const DELETE_BAG_URL = '/api/post_activation/delete_bag';
+const MOVE_TO_STOCK_URL = '/api/post_activation/move_to_stock';
 
 api.interceptors.response.use(
   (resp) => {
@@ -80,7 +81,7 @@ function ddmmyy(d = new Date()) {
   return `${dd}${mm}${yy}`;
 }
 
-export default function Re_Process() {
+export default function Re_Process({tabName}) {
   const theme = useTheme();
   const isSmall = useMediaQuery(theme.breakpoints.down("sm"));
 
@@ -171,7 +172,7 @@ const [starting, setStarting] = useState(false);
     setBagsLoading(true);
     try {
       // Your route returns rows: bag_no, weight, screening_out_dt (for Re_Process)
-      const resp = await api.get("/api/re_process/re_process");
+      const resp = await api.get("/api/post_activation/bags_to_process",{params :{tabName},withCredentials:true});
       const rows = Array.isArray(resp.data) ? resp.data : [];
       setAvailable(rows);
     } catch (e) {
@@ -185,8 +186,9 @@ const [starting, setStarting] = useState(false);
   // 2) Grades (active + live)
   const fetchActiveGrades = async () => {
   try {
-    const resp = await api.get("/api/settings/output-grades", { params: { activeOnly: true } });
-    return Object.keys(resp.data?.data || {}).sort();
+    const resp = await api.get("/api/settings/output-grades", { params: { activeOnly: true } ,withCredentials:true});
+    const map = resp.data?.data?.Output_Grades || {};
+    return Object.keys(map).sort();
   } catch (e) {
     console.error("fetchActiveGrades", e);
     setGradesError(e?.response?.data?.error || e?.message || "Failed to load active output grades.");
@@ -196,7 +198,7 @@ const [starting, setStarting] = useState(false);
 
   const fetchLiveGrades = async () => {
   try {
-    const resp = await api.get("/api/settings/output-grades-live");
+    const resp = await api.get("/api/settings/output-grades-live",{ withCredentials: true });
     return Array.isArray(resp.data?.data) ? resp.data.data : [];
   } catch (e) {
     console.error("fetchLiveGrades", e);
@@ -209,7 +211,7 @@ const [starting, setStarting] = useState(false);
   setGradesError('');
   setSavingLive(true);
   try {
-    await api.put("/api/settings/output-grades-live", { grades, remarks });
+    await api.put("/api/settings/output-grades-live", { grades},{ withCredentials: true });
   } catch (e) {
     console.error("saveLiveGrades", e);
     setGradesError(e?.response?.data?.error || e?.message || "Failed to save output grades.");
@@ -223,7 +225,7 @@ const [starting, setStarting] = useState(false);
   const fetchStatus = async () => {
     setStatusLoading(true);
     try {
-      const { data } = await api.get("/api/re_process/status");
+      const { data } = await api.get("/api/post_activation/status",{ params: { tabName },withCredentials: true });
       if (data?.busy) {
         setLot(data.lot || null);
         setLot(data.lot || null);
@@ -325,7 +327,7 @@ const startScreening = async () => {
   setStarting(true);
   try {
     const bagsPayload = loaderBags.map(({ bag_no, weight }) => ({ bag_no, weight }));
-    const resp = await api.post(LOAD_BAGS_URL, { bags: bagsPayload });
+    const resp = await api.post(LOAD_BAGS_URL, { bags: bagsPayload },{ params: { tabName }, withCredentials: true });
     const lotResp = resp?.data?.lot || null;
     if (!lotResp?.lot_id) throw new Error("Start failed: lot_id missing in response.");
     setLot(lotResp);
@@ -387,7 +389,7 @@ const handleAddOut = async (grade) => {
   if (!Number.isFinite(w) || w <= 0) return;
   setOutSaving(true);
   try {
-    await api.post(CREATE_LABEL_URL, { lot_id: lot.lot_id, grade, bag_weight: w });
+    await api.post(CREATE_LABEL_URL, { lot_id: lot.lot_id, grade, bag_weight: w },{ params: { tabName }, withCredentials: true });
     setNewLabelWeight((prev) => ({ ...prev, [grade]: '' }));
     await fetchStatus();
   } catch (e) {
@@ -404,7 +406,9 @@ const handleDeleteOut = async (bag_no) => {
   if (!bag_no) return;
   setOutSaving(true);
   try {
-    await api.post(DELETE_BAG_URL, { bag_no });
+    await api.post(DELETE_BAG_URL, 
+      { bag_no },
+      { params: { tabName }, withCredentials: true });
     await fetchStatus();
   } catch (e) {
     console.error(e);
@@ -435,7 +439,10 @@ const moveToStock = async () => {
   if (!canMoveToStock) return;
   try {
     const payload = lot?.lot_id ? { lot_id: lot.lot_id } : {};
-    await api.post(MOVE_TO_STOCK_URL, payload);
+    await api.post(MOVE_TO_STOCK_URL,
+      { ...payload },
+      { params: { tabName }, withCredentials: true }
+    );
     resetAll();
     await fetchStatus();
   } catch (e) {
@@ -453,14 +460,17 @@ const moveToStock = async () => {
 
       {/* Top header */}
       <Stack direction={{ xs: "column", md: "row" }} spacing={1} alignItems={{ md: "center" }} sx={{ mb: 1 }}>
-        <Typography variant="h6" fontWeight={700}>Screening – Machine SCR-1</Typography>
+        <Typography variant="h6" fontWeight={700}>{tabName} – Machine </Typography>
         <Box sx={{ flex: 1 }} />
       </Stack>
 
-      <Grid container spacing={2} alignItems="stretch">
+      <Grid container columnSpacing={2} rowSpacing={2} alignItems="stretch" columns={{ xs: 12, md: 12 }}
+          sx={{ flexWrap: { xs: 'wrap', md: 'nowrap' } }}
+      >
         {/* Left: Available Inputs */}
-        <Grid item xs={12} md={4}>
-          <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, width: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", opacity: busy ? 0.8 : 1 }}>
+        <Grid item xs={12} md={4} sx={{ minWidth: 0 }}>
+          {/* <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, width: "100%", boxSizing: "border-box", display: "flex", flexDirection: "column", opacity: busy ? 0.8 : 1 }}> */}
+            <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: 'flex', flexDirection: 'column', minWidth: 0, overflowX: 'hidden', width: '100%', boxSizing: 'border-box',opacity: busy ? 0.8 : 1  }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
               <Stack direction="row" spacing={1} alignItems="center">
                 <Typography variant="subtitle1">Available Input Bags</Typography>
@@ -532,10 +542,11 @@ const moveToStock = async () => {
         </Grid>
 
         {/* Center: Loader + Output Grades (below) */}
-        <Grid item xs={12} md={4}>
-          <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", minWidth: 0, overflowX: "hidden", width: LEFT_WIDTH, boxSizing: "border-box" }}>
+        <Grid item xs={12} md={4} sx={{ minWidth: 0 }}>
+          {/* <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", minWidth: 0, overflowX: "hidden", width: LEFT_WIDTH, boxSizing: "border-box" }}> */}
+            <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", minWidth: 0, width:'100%',overflowX: "hidden", boxSizing: "border-box" }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
-              <Typography variant="subtitle1">Screening Loader</Typography>
+              <Typography variant="subtitle1">{tabName} Loader</Typography>
               <Stack direction="row" spacing={2} alignItems="center">
                 <Stack direction="row" spacing={1} alignItems="center">
                   <Typography variant="body2">{busy ? "Busy" : "Idle"}</Typography>
@@ -544,7 +555,7 @@ const moveToStock = async () => {
                 <Chip label={`${loaderBags.length}/4 loaded`} size="small" />
               </Stack>
         
-      </Stack>
+            </Stack>
 
             <Box sx={{ flex: 1, minHeight: { xs: 250, md: 300 }, overflowY: "auto", overflowX: "hidden", pr: 1, width: "100%", scrollbarGutter: "stable" }}>
               {loaderBags.length === 0 ? (
@@ -655,8 +666,9 @@ const moveToStock = async () => {
 
         {/* Right: Status & Output — only visible after Start */}
         {started && (
-          <Grid item xs={12} md={4}>
-            <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", width: RIGHT_WIDTH, boxSizing: "border-box", overflowX: "hidden" }}>
+          <Grid item xs={12} md={4} sx={{ minWidth: 0,height: { xs: "100%", sm: "auto" } }}>
+            {/* <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: "flex", flexDirection: "column", width: RIGHT_WIDTH, boxSizing: "border-box", overflowX: "hidden" }}> */}
+              <Paper sx={{ ...paperSx, height: { xs: "100%", sm: PAPER_HEIGHT }, display: "flex", flexDirection: "column", boxSizing: "border-box", overflowX: "hidden" ,width:'100%'}}>
               {/* Header */}
               <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
                 <Typography variant="subtitle1">Machine Status & Output</Typography>
@@ -666,11 +678,11 @@ const moveToStock = async () => {
               {/* Totals */}
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between" sx={{ mb: 1 }}>
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography fontSize={13}>Loaded</Typography>
+                  <Typography fontSize={13}>L</Typography> 
                   <Chip size="small" label={`${fmt1(parseNum(loadedWeight))} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
-                  <Typography fontSize={13}>Σ Output</Typography>
+                  <Typography fontSize={13}>Σ</Typography>
                   <Chip size="small" label={`${fmt1(parseNum(outputsTotal))} kg`} />
                 </Stack>
                 <Stack direction="row" spacing={1} alignItems="center">
@@ -682,18 +694,18 @@ const moveToStock = async () => {
                   />
                 </Stack>
         
-      </Stack>
+               </Stack>
 
               <LinearProgress variant="determinate" value={Math.min(100, (outputsTotal / (loadedWeight || 1)) * 100)} />
 
               {/* Two columns */}
               <Grid container spacing={1} sx={{ mt: 1, flex: 1, overflow: "hidden" }}>
                 {/* LEFT COLUMN: Per-grade / Grade chips */}
-                <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
+                <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: { xs: "100%", sm: 360 } }}>
                   {busy ? (
                     <>
                       <Typography variant="subtitle2" sx={{ mb: 0.5 }}>Output Grades</Typography>
-                      <Box sx={{ overflowY: "auto", pr: 1 }}>
+                      <Box sx={{ overflowY: "auto", pr: 1,maxHeight:{ xs: "100%", sm: 200 } }}>
                         {selectedGrades.length === 0 && (
                           <Alert severity="warning" sx={{ mb: 1 }}>Select at least one grade.</Alert>
                         )}
@@ -806,11 +818,15 @@ const moveToStock = async () => {
                 </Grid>
 
                 {/* RIGHT COLUMN: Output list / Labels list */}
-                <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: 360 }}>
+                <Grid item xs={12} sm={6} sx={{ display: "flex", flexDirection: "column", maxHeight: { xs: "100%", sm: 360 } }}>
                   {busy ? (
                     <>
                       <Typography variant="subtitle2">Output Bags</Typography>
-                      <Box sx={{ overflowY: "auto", overflowX: "hidden", pr: 1, flex: 1, width: "100%", scrollbarGutter: "stable" }}>
+                      <Box sx={{ overflowX: "hidden", pr: 1, flex: 1, width: "100%", 
+                        overflowY: 'scroll',scrollbarGutter: 'stable',
+                        scrollbarWidth: 'thin','&::-webkit-scrollbar': { width: 8 },
+                        '&::-webkit-scrollbar-thumb': { borderRadius: 8, backgroundColor: 'divider' },
+                        '&::-webkit-scrollbar-track': { backgroundColor: 'background.paper' },maxHeight:{ xs: "100%", sm: 150 } }}>
                         {Array.isArray(serverOutBags) && serverOutBags.length > 0 ? (
                           serverOutBags.map((r, i) => (
                             <Paper
@@ -822,7 +838,7 @@ const moveToStock = async () => {
                                   <Chip size="small" label={r.bag_no} />
                                   <Chip size="small" variant="outlined" label={r.grade || "—"} />
                                   <Chip size="small" label={`${fmt1(parseNum(r.bag_weight))} kg`} />
-                                  
+                                  <PrintLabelButton bag_no={r.bag_no} grade={r.grade} weight={r.bag_weight} heightIn={2.5} />
                                 </Stack>
                               
                                 <IconButton
@@ -861,6 +877,7 @@ const moveToStock = async () => {
                                   <Chip size="small" label={l.labelId} />
                                   <Chip size="small" variant="outlined" label={l.grade} />
                                   <Chip size="small" label={`${fmt1(parseNum(l.weight))} kg`} />
+                                  <PrintLabelButton bag_no={l.labelId} grade={l.grade} weight={l.weight} heightIn={2.5} />
                                 </Stack>
                                 <IconButton size="small" onClick={() => deleteLabel(l.id)}>
                                   <CloseIcon fontSize="small" />
@@ -885,7 +902,7 @@ const moveToStock = async () => {
                   disabled={!canMoveToStock}
                   onClick={moveToStock}
                 >
-                  Move to Stock
+                  Move to Quality
                 </Button>
               </Stack>
             </Paper>

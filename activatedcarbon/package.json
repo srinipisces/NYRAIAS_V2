@@ -20,6 +20,7 @@
     "@mui/x-tree-view": "^8.4.0",
     "@nivo/bar": "^0.99.0",
     "@nivo/core": "^0.99.0",
+    "@zxing/browser": "^0.1.5",
     "axios": "^1.9.0",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",
