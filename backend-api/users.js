@@ -463,8 +463,10 @@ router.post('/logout', authenticate, async (req, res) => {
 
     res.clearCookie('token', {
       httpOnly: true,
-      sameSite: 'Strict',
       secure: true, // if using HTTPS
+      sameSite: 'Lax',
+      path: '/',
+      domain: '.nyraias.com'
     });
 
     res.json({ message: 'Logged out successfully' });
@@ -508,6 +510,51 @@ router.get('/branding', authenticate, async (req, res) => {
   }
 });
 
+// GET /api/users/menu_strucutre   <-- spelling kept as requested
+// Requires auth middleware to have set req.user / req.auth with an accountid
+router.get('/menu_structure', authenticate,async (req, res) => {
+  // pull accountid from the token (adjust these paths if your auth shape differs)
+    const { accountid } = req.user;
+
+  if (!accountid) {
+    return res.status(400).json({ message: 'Missing accountid in auth token' });
+  }
+
+  try {
+    const { rows } = await pool.query(
+      'SELECT menu_structure FROM account_route_config WHERE accountid = $1 LIMIT 1',
+      [accountid]
+    );
+
+    if (!rows.length || !rows[0].menu_structure) {
+      // Optional: return a sane default if the account hasn't been configured yet.
+      // If you prefer a 404 instead, replace this with: return res.status(404).json({ message: 'No menu structure found' });
+      /* const DEFAULT_MENU_STRUCTURE = {
+        Dashboard: [],
+        Operations: {
+          Receivables: ['Security', 'Lab'],
+          RMS: ['Raw-Material Inward', 'Crusher Performance', 'Raw-Material Outward'],
+          Activation: ['Kiln Feed','Kiln Feed Quality','Boiler Performance','Kiln Temperature','Kiln Output','De-Stoning'],
+          PostActivation: ['Quality','Screening','Crushing','De-Dusting','De-Magnetize','Blending'],
+          Delivery: []
+        },
+        Reports: ['Receivables','RMS','Activation','PostActivation','Stock','General'],
+        Settings: []
+      }; */
+      return res.status(404).json({ message: 'Failed to load menu structure for this account' });
+    }
+
+    // menu_structure column is json/jsonb, so just return it
+    return res.json(rows[0].menu_structure);
+  } catch (err) {
+    console.error('menu_strucutre error:', err);
+    return res.status(500).json({ message: 'Failed to load menu structure' });
+  }
+});
+
+/* Optional: add a correctly spelled alias if you want both to work
+router.get('/menu_structure', (req, res, next) => router.handle(req, res, next));
+*/
 
 
 module.exports = router;

@@ -14,25 +14,66 @@ const { getKolkataDayString, formatToKolkataDay } = require('./date');
 const { authenticate } = require('./authenticate');
 
 
+// GET /inwardnumber
 router.get("/inwardnumber", authenticate, async (req, res) => {
   const { accountid } = req.user;
-  const table = `${accountid}_rawmaterial_rcvd`;
+
+  // Safety: allow only alnum + underscore in dynamic table names
+  if (!/^[A-Za-z0-9_]+$/.test(accountid)) {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+
+  const rcvdTable = `${accountid}_rawmaterial_rcvd`;
+  const bagsTable = `${accountid}_material_inward_bag`;
 
   try {
     const query = `
-      SELECT inward_number 
-      FROM ${table} 
-      WHERE lab_result IS NOT NULL AND material_inward_status IS NULL and admit_load != 'Deny'
+      SELECT
+        r.inward_number,
+        r.our_weight,
+        COALESCE(
+          JSON_AGG(
+            JSON_BUILD_OBJECT(
+              'bag_no', b.bag_no,
+              'weight', b.weight
+            )
+            ORDER BY b.write_timestamp DESC
+          ) FILTER (WHERE b.bag_no IS NOT NULL),
+          '[]'::json
+        ) AS bags
+      FROM ${rcvdTable} AS r
+      LEFT JOIN ${bagsTable} AS b
+        ON b.inward_number = r.inward_number
+      WHERE
+        r.lab_result IS NOT NULL
+        AND r.material_inward_status IS NULL
+        AND COALESCE(r.admit_load, '') <> 'Deny'
+      GROUP BY r.inward_number, r.our_weight
+      ORDER BY r.inward_number;
     `;
 
     const result = await pool.query(query);
-    const inwardNumbers = result.rows.map(row => row.inward_number);
-    res.json(inwardNumbers);
+
+    const payload = result.rows.map(row => ({
+      inward_no: row.inward_number,                 // string
+      weight: Number(row.our_weight) || 0,          // number
+      bags: Array.isArray(row.bags)                 // array of { bag_no, weight }
+        ? row.bags.map(b => ({
+            bag_no: b.bag_no,
+            weight: Number(b.weight) || 0,
+          }))
+        : [],
+    }));
+
+    // [] when there are no matching inwards
+    res.json(payload);
   } catch (err) {
-    console.error("Error fetching inward numbers:", err);
+    console.error("Error fetching inward numbers with bags:", err);
     res.status(500).json({ error: "Database error" });
   }
 });
+
+
 
 
 router.get("/inwardweightsummary", authenticate, async (req, res) => {
@@ -80,7 +121,7 @@ router.get("/inwardweightsummary", authenticate, async (req, res) => {
 });
 
 
-router.post("/crusherload", authenticate, checkAccess('Operations.Raw-Material Inward'), async (req, res) => {
+router.post("/crusherload", authenticate, checkAccess('Operations.RMS.Raw-Material Inward'), async (req, res) => {
   const { accountid, userid } = req.user;
   const bagTable = `${accountid}_material_inward_bag`;
   const rcvdTable = `${accountid}_rawmaterial_rcvd`;
@@ -118,11 +159,11 @@ router.post("/crusherload", authenticate, checkAccess('Operations.Raw-Material I
     const insertBagQuery = `
       INSERT INTO ${bagTable} (inward_number, weight, userid)
       VALUES ($1, $2, $3)
-      RETURNING bag_no;
+      RETURNING bag_no,write_timestamp;
     `;
     const insertBagResult = await client.query(insertBagQuery, [inward_number, weight, userid]);
     const newbag_no = insertBagResult.rows[0].bag_no;
-
+    const write_dt = insertBagResult.write_timestamp;
     // 2. Check if history exists for this day + inward_number
     const checkHistory = await client.query(
       `SELECT 1 FROM ${historyTable} WHERE day = $1 AND inward_number = $2`,
@@ -184,7 +225,7 @@ router.post("/crusherload", authenticate, checkAccess('Operations.Raw-Material I
     }
 
     await client.query('COMMIT');
-    res.json({ operation: 'success', bag_no: newbag_no });
+    res.json({ operation: 'success', bag_no: newbag_no,write_dt: write_dt });
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -200,7 +241,7 @@ router.post("/crusherload", authenticate, checkAccess('Operations.Raw-Material I
 router.put(
   "/materialinwardcomplete",
   authenticate,
-  checkAccess('Operations.Raw-Material Inward'),
+  checkAccess('Operations.RMS.Raw-Material Inward'),
   async (req, res) => {
     const { accountid, userid } = req.user;
     const { inward_number, remark } = req.body;

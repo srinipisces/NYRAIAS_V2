@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Box, CssBaseline, Drawer, Divider, Toolbar } from '@mui/material';
 import Topbar from './Topbar';      // ensure correct path
-import Sidebar from './SidebarV2';    // ensure correct path
+import Sidebar from './Sidebar';    // ensure correct path
 import { Outlet } from 'react-router-dom';
 
 const EXPANDED_WIDTH = 260;

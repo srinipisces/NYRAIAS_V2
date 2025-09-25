@@ -1225,4 +1225,35 @@ CREATE INDEX IF NOT EXISTS idx_samcarbons_re_process_out_bag_no
   ON samcarbons_re_process_out (bag_no);
 
 
-
+update account_route_config 
+set menu_structure = '{
+  "icons": { "dashboard": "dashboard", "operations": "workspaces", "reports": "assessment", "settings": "settings", "logout": "logout" },
+  "routes": { "Dashboard": "/", "Reports": "/reports", "Settings": "/settings" ,"Operations.Receivables":"/operations/receivables","Operations.RMS":"/operations/rms","Operations.Activation":"/operations/activation","Operations.Delivery":"/operations/delivery","Operations.PostActivation":"/operations/post-activation"},
+  "menu_structure":{
+  "Dashboard": [],
+  "Operations": {
+    "Receivables": ["Security", "Lab","Edit"],
+    "RMS": ["Raw-Material Inward", "Crusher Performance", "Raw-Material Outward","Edit"],
+    "Activation": ["Kiln Feed","Kiln Feed Quality","Boiler Performance","Kiln Temperature","Kiln Output","De-Stoning","Edit"],
+    "PostActivation": ["Quality","Screening","Crushing","De-Dusting","De-Magnetize","Blending","Edit"],
+    "Delivery": []
+  },
+  "Reports": ["Receivables","RMS","Activation","PostActivation","Stock","General"],
+  "Settings": ["User Management","Add Suppliers","Grade Management"],
+  "menu_order" : ["Dashboard", "Operations", "Reports", "Settings"],
+  "child_order": {
+      "Operations": ["RMS", "Delivery", "Activation", "Receivables", "PostActivation"],
+      "Reports": ["Receivables","RMS","Activation","PostActivation","Stock","General"],
+      "Settings": ["User Management","Add Suppliers","Grade Management"]
+    }
+  },
+  "components": {
+    "Dashboard": "/src/Dashboard/Dashboard.jsx",
+    "Reports": "/src/Reports/Reports.jsx",
+    "Settings": "/src/Settings/settings.jsx",
+    "Operations.Receivables": "/src/Receivables/Receivables.jsx",
+    "Operations.RMS": "/src/RMS/RMS.jsx",
+    "Operations.Activation": "/src/Activation/Activation.jsx",
+	  "Operations.PostActivation": "/src/PostActivation/PostActivation.jsx",
+    "Operations.Delivery": "/src/Delivery/Delivery.jsx"
+  }}'::JSONB;

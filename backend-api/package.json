@@ -5,6 +5,7 @@
   "dependencies": {
     "bcrypt": "^6.0.0",
     "body-parser": "^1.20.1",
+    "bwip-js": "^4.7.0",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dayjs": "^1.11.13",

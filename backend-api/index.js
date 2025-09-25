@@ -66,7 +66,7 @@ router.get("/gcharcoalstock", async(req,res) => {
 })
 
 //// security
-router.post("/materialatgate", authenticate, checkAccess("Operations.Security"), async (req, res) => {
+router.post("/materialatgate", authenticate, checkAccess("Operations.Receivables.Security"), async (req, res) => {
   const client = await pool.connect();
   try {
     const { userid, accountid } = req.user;
@@ -182,7 +182,8 @@ router.get("/RawMaterialIncoming", authenticate, async (req, res) => {
         moisture, 
         dust, 
         ad_value, 
-        lab_result AS lab_result_time 
+        lab_result AS lab_result_time ,
+        admit_load
       FROM ${table}
       WHERE lab_result IS NULL
     `;
@@ -281,7 +282,7 @@ router.get("/crusher-performance-inward",authenticate, async (req, res) => {
 router.post(
   "/crusherperformance",
   authenticate,
-  checkAccess("Operations.Crusher Performance"),
+  checkAccess("Operations.RMS.Crusher Performance"),
   async (req, res) => {
     const { userid, accountid } = req.user;
 
@@ -359,7 +360,7 @@ router.post(
 // final
 
 //final..
-router.get("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Performance'),async (req, res) => {
+router.get("/BoilerPerformance", authenticate,checkAccess('Operations.Activation.Boiler Performance'),async (req, res) => {
   const {accountid} = req.user;
   const table = `${accountid}_boiler_performance`;
   try {
@@ -381,7 +382,7 @@ router.get("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Per
   }
 });
 // final
-router.post("/BoilerPerformance", authenticate,checkAccess('Operations.Boiler Performance'),async(req,res) => {
+router.post("/BoilerPerformance", authenticate,checkAccess('Operations.Activation.Boiler Performance'),async(req,res) => {
   try {
     const {userid,accountid} = req.user
     const table = `${accountid}_boiler_performance`;

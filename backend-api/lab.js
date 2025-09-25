@@ -18,11 +18,11 @@ router.get("/inwardlabque", authenticate, async (req, res) => {
   const table = `${accountid}_rawmaterial_rcvd`; // 👈 table name with tenant prefix
 
   try {
-    const query = `SELECT inward_number FROM ${table} WHERE lab_result IS NULL`;
+    const query = `SELECT material_arrivaltime,inward_number,supplier_name,supplier_dc_number,supplier_weight,supplier_value,
+    our_weight as security_weight,userid as security_userid FROM ${table} WHERE lab_result IS NULL`;
     const result = await pool.query(query);
-    const inwardNumbers = result.rows.map(row => row.inward_number);
 
-    res.json(inwardNumbers);
+    res.json(result);
   } catch (err) {
     console.error('Error fetching inward lab queue:', err);
     res.status(500).json({ error: "Database error" });
@@ -33,7 +33,7 @@ router.get("/inwardlabque", authenticate, async (req, res) => {
 router.post(
   "/inwardlabtest",
   authenticate,
-  checkAccess('Operations.Lab'),
+  checkAccess('Operations.Receivables.Lab'),
   async (req, res) => {
     const { userid, accountid } = req.user;
     const table = `${accountid}_rawmaterial_rcvd`;
