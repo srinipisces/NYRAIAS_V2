@@ -33,7 +33,7 @@ import LabelOutlinedIcon from "@mui/icons-material/LabelOutlined";
 import axios from "axios";
 import PrintLabelButton from "../QR/PrintLabel";
 import QrCodeScannerIcon from "@mui/icons-material/QrCodeScanner";
-import QrScannerDialog from "./QrScannerDialog";
+import QrScannerDialog from "../QR/QrScannerDialog";
 /* ------------------ API client (VITE_URL + cookies + error surfacing) ------------------ */
 const API_URL = import.meta.env.VITE_API_URL;
 const api = axios.create({ baseURL: API_URL || "/", withCredentials: true, timeout: 20000 });

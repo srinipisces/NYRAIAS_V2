@@ -34,6 +34,43 @@ const iconFrom = (iconMap, key) =>
 const hasAccessToken = (access, key) =>
   access.includes(key) || access.some(a => a.startsWith(`${key}.`));
 
+
+// Backend-provided menu structure shape assumed:
+// {
+//   child_order: { Operations: ["RMS", "Delivery", "Activation", "Receivables", "PostActivation"], ... },
+//   Operations: { /* nested groups/items here */ },
+//   Reports: { ... },
+//   Settings: { ... }
+// }
+
+function orderKeysByArray(obj, orderArr) {
+  const all = Object.keys(obj).filter(k =>
+    // keep only real children (skip meta keys if any)
+    !['menu_order', 'icon', 'path', 'label', 'children'].includes(k)
+  );
+
+  if (!Array.isArray(orderArr) || orderArr.length === 0) return all;
+
+  const listed = new Set(orderArr);
+  const inOrder = orderArr.filter(k => all.includes(k));
+  const theRest = all.filter(k => !listed.has(k)).sort(); // stable/fallback
+  return [...inOrder, ...theRest];
+}
+
+function getSecondLevelOrder(menuStructure, topKey) {
+  // 1) Prefer explicit global child_order for this topKey
+  const fromChildOrder = menuStructure?.child_order?.[topKey];
+  if (Array.isArray(fromChildOrder) && fromChildOrder.length) return fromChildOrder;
+
+  // 2) Or a per-group inline order if your backend sends it (optional)
+  const inline = menuStructure?.[topKey]?.menu_order;
+  if (Array.isArray(inline) && inline.length) return inline;
+
+  // 3) Otherwise unsorted (natural object key order)
+  return null;
+}
+
+
 // ---------- MAIN BUILDER (route-driven; preserves order from menu_structure) ----------
 /**
  * Rules:
@@ -64,6 +101,10 @@ function buildItemsFromConfig(cfg, access) {
   const childOrderMap = (menu.child_order && typeof menu.child_order === 'object')
     ? menu.child_order
     : {};
+
+  // after childOrderMap is defined
+  const META_CHILD_KEYS = new Set(['menu_order', 'icon', 'path', 'children']);
+
   // -------------------------------------------------------------------
 
   for (const topKey of topOrder) {
@@ -99,9 +140,26 @@ function buildItemsFromConfig(cfg, access) {
     // === Objects (groups) — use child_order if provided ===
     if (isObject) {
       const group = value;
-      const childOrder = Array.isArray(childOrderMap[topKey])
-        ? childOrderMap[topKey]
-        : Object.keys(group);
+      // after — honor backend order for level-2
+      const inlineOrder = Array.isArray(group?.menu_order) ? group.menu_order : null;
+
+      // children we can actually render (exclude meta keys)
+      const unorderedKeys = Object.keys(group).filter(k => !META_CHILD_KEYS.has(k));
+
+      // desired order coming from backend
+      const desiredOrder =
+        (Array.isArray(childOrderMap[topKey]) && childOrderMap[topKey].length
+          ? childOrderMap[topKey]                 // 1) global child_order, e.g. Operations: [...]
+          : (Array.isArray(inlineOrder) && inlineOrder.length
+              ? inlineOrder                       // 2) inline per-group menu_order (optional)
+              : []));                             // 3) no explicit order
+
+      // final child order = desired (filtered) + any extras
+      const desiredSet = new Set(desiredOrder);
+      const childOrder = [
+        ...desiredOrder.filter(k => unorderedKeys.includes(k)),
+        ...unorderedKeys.filter(k => !desiredSet.has(k)),
+      ];
 
       const children = [];
       for (const childKey of childOrder) {

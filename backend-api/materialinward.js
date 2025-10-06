@@ -365,75 +365,343 @@ router.put(
 router.get("/material-inward-bagging", authenticate, async (req, res) => {
   const { accountid } = req.user;
 
-  const rawTable = `${accountid}_rawmaterial_rcvd`;
-  const bagTable = `${accountid}_material_inward_bag`;
+  const rawTable    = `${accountid}_rawmaterial_rcvd`;
+  const inBagTable  = `${accountid}_material_inward_bag`;
+  const outBagTable = `${accountid}_material_outward_bag`;
+
+  const pageSize = Math.max(1, Math.min(200, parseInt(req.query.pageSize ?? "50", 10)));
+  const page     = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset   = (page - 1) * pageSize;
+
+  // existing date filters
+  const from = (req.query.from || '').toString().trim(); // YYYY-MM-DD
+  const to   = (req.query.to   || '').toString().trim();
+
+  // NEW: free-text filter for inward number
+  const q    = (req.query.q    || '').toString().trim();
+
+  const where = [];
+  const args = [];
+  const add = (sql, val) => { args.push(val); where.push(sql.replace("$X", `$${args.length}`)); };
+
+  if (from) add(`r.material_arrivaltime >= $X`, `${from} 00:00:00`);
+  if (to)   add(`r.material_arrivaltime <= $X`, `${to} 23:59:59.999`);
+
+  // NEW: match inward_number (case-insensitive, contains)
+  if (q)    add(`r.inward_number ILIKE $X`, `%${q}%`);
+
+  const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   try {
-    const result = await pool.query(`
-      SELECT 
-        a.inward_number, 
-        a.supplier_name, 
-        a.material_arrivaltime, 
-        a.material_inward_status,
-        a.material_outward_status,
-        b.bag_no, 
-        b.weight AS bag_weight, 
-        b.write_timestamp AS bag_update_time
-      FROM 
-        ${rawTable} a
-      LEFT JOIN 
-        ${bagTable} b 
-      ON 
-        a.inward_number = b.inward_number
-      WHERE 
-        a.material_outward_status IS NULL 
-        AND a.lab_result IS NOT NULL
-        and a.admit_load != 'Deny'
-    `);
+    const sql = `
+      WITH parents AS (
+        SELECT DISTINCT b.inward_number
+        FROM ${inBagTable} b
+      ),
+      parent_info AS (
+        SELECT
+          p.inward_number,
+          r.our_weight,
+          r.material_inward_status,
+          r.material_outward_status,
+          r.material_arrivaltime
+        FROM parents p
+        JOIN ${rawTable} r ON r.inward_number = p.inward_number
+        ${whereSql}
+      ),
+      parent_count AS ( SELECT COUNT(*)::bigint AS total FROM parent_info ),
+      parent_page AS (
+        SELECT * FROM parent_info
+        ORDER BY inward_number DESC
+        LIMIT $${args.length + 1} OFFSET $${args.length + 2}
+      ),
+      inward_bags AS (
+        SELECT
+          b.inward_number,
+          json_agg(
+            json_build_object(
+              'bag_no', b.bag_no,
+              'bag_weight', b.weight,
+              'bag_update_time', b.write_timestamp
+            )
+            ORDER BY b.write_timestamp DESC
+          ) AS bags
+        FROM ${inBagTable} b
+        JOIN parent_page pp ON pp.inward_number = b.inward_number
+        GROUP BY b.inward_number
+      ),
+      outward_bags AS (
+        SELECT
+          ob.inward_number,
+          json_agg(
+            json_build_object(
+              'bag_no', ob.bag_no,
+              'grade', ob.grade,
+              'bag_weight', ob.weight,
+              'bag_update_time', ob.write_timestamp
+            )
+            ORDER BY ob.write_timestamp DESC
+          ) AS outward_bags
+        FROM ${outBagTable} ob
+        JOIN parent_page pp ON pp.inward_number = ob.inward_number
+        GROUP BY ob.inward_number
+      )
+      SELECT
+        pc.total,
+        pp.inward_number,
+        pp.our_weight,
+        pp.material_inward_status,
+        pp.material_outward_status,
+        COALESCE(ib.bags, '[]'::json)         AS bags,
+        COALESCE(ob.outward_bags, '[]'::json) AS outward_bags
+      FROM parent_page pp
+      CROSS JOIN parent_count pc
+      LEFT JOIN inward_bags  ib ON ib.inward_number = pp.inward_number
+      LEFT JOIN outward_bags ob ON ob.inward_number = pp.inward_number
+      ORDER BY pp.inward_number DESC;
+    `;
 
-    const rows = result.rows;
-    const map = new Map();
+    const { rows } = await pool.query(sql, [...args, pageSize, offset]);
 
-    for (const r of rows) {
-      if (!map.has(r.inward_number)) {
-        map.set(r.inward_number, {
-          inward_number: r.inward_number,
-          supplier_name: r.supplier_name,
-          material_arrivaltime: r.material_arrivaltime,
-          material_inward_status: r.material_inward_status,
-          material_outward_status: r.material_outward_status,
-          bags: [],
-        });
-      }
-      map.get(r.inward_number).bags.push({
-        bag_no: r.bag_no,
-        bag_weight: r.bag_weight,
-        bag_update_time: r.bag_update_time,
-      });
-    }
+    const total = Number(rows[0]?.total || 0);
+    const dataRows = rows.map(r => ({
+      inward_number: r.inward_number,
+      our_weight: r.our_weight,
+      material_inward_status: r.material_inward_status,
+      material_outward_status: r.material_outward_status,
+      bags: Array.isArray(r.bags) ? r.bags : [],
+      outward_bags: Array.isArray(r.outward_bags) ? r.outward_bags : []
+    }));
 
     const columns = [
       { field: "inward_number", headerName: "Inward Number" },
-      { field: "supplier_name", headerName: "Supplier" },
-      { field: "material_arrivaltime", headerName: "Arrival Time" },
+      { field: "our_weight", headerName: "Our Weight" },
       { field: "material_inward_status", headerName: "Inward Status" },
       { field: "material_outward_status", headerName: "Outward Status" },
     ];
-
-    const expandColumns = [
+    const expandColumnsInward = [
       { field: "bag_no", headerName: "Bag No" },
+      { field: "bag_weight", headerName: "Weight" },
+      { field: "bag_update_time", headerName: "Updated Time" },
+    ];
+    const expandColumnsOutward = [
+      { field: "bag_no", headerName: "Bag No" },
+      { field: "grade", headerName: "Grade" },
       { field: "bag_weight", headerName: "Weight" },
       { field: "bag_update_time", headerName: "Updated Time" },
     ];
 
     res.json({
       columns,
-      rows: Array.from(map.values()),
-      expandColumns,
+      rows: dataRows,
+      expandColumnsInward,
+      expandColumnsOutward,
+      page,
+      pageSize,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / pageSize)),
     });
   } catch (err) {
-    console.error(err);
+    console.error("material-inward-bagging (paginated, dual-children) error:", err);
     res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+
+function buildAuditItem(column, oldVal, newVal, userid) {
+  return {
+    column,
+    old_value: oldVal,
+    new_value: newVal,
+    userid,
+    upd_dt: new Date().toISOString(),
+  };
+}
+
+router.put('/inward-outward-status', authenticate, checkAccess('Operations.RMS.Edit') ,async (req, res) => {
+  const { accountid, userid } = req.user || {};
+  const { inward_number, material_inward_status, material_outward_status } = req.body || {};
+
+  if (!accountid || !userid) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  if (!inward_number) return res.status(400).json({ success: false, error: 'inward_number is required' });
+
+  const table = `${accountid}_rawmaterial_rcvd`;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Grab current values
+    const { rows: curRows } = await client.query(
+      `SELECT material_inward_status, material_outward_status
+       FROM ${table}
+       WHERE inward_number = $1
+       LIMIT 1`,
+      [inward_number]
+    );
+    if (curRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Inward not found' });
+    }
+    const cur = curRows[0];
+
+    // Build only changed audit items
+    const items = [];
+    if (cur.material_inward_status !== material_inward_status) {
+      items.push(
+        buildAuditItem('material_inward_status', cur.material_inward_status, material_inward_status, userid)
+      );
+    }
+    if (cur.material_outward_status !== material_outward_status) {
+      items.push(
+        buildAuditItem('material_outward_status', cur.material_outward_status, material_outward_status, userid)
+      );
+    }
+
+    // If nothing changed, short-circuit
+    if (items.length === 0) {
+      await client.query('COMMIT');
+      return res.json({ success: true, updated: false });
+    }
+
+    const { rows: updated } = await client.query(
+      `
+      UPDATE ${table} t
+      SET material_inward_status  = $2,
+          material_outward_status = $3,
+          audit_trail = COALESCE(t.audit_trail, '[]'::jsonb) || $4::jsonb
+      WHERE t.inward_number = $1
+      RETURNING inward_number, material_inward_status, material_outward_status, audit_trail
+      `,
+      [
+        inward_number,
+        material_inward_status ?? null,
+        material_outward_status ?? null,
+        JSON.stringify(items), // already an array -> append as array
+      ]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true, updated: true, row: updated[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e);
+    return res.status(500).json({ success: false, error: 'Internal error' });
+  } finally {
+    client.release();
+  }
+});
+
+
+// routes/materialoutward.js
+router.put('/update-outwardbag-weight', authenticate, checkAccess('Operations.RMS.Edit') ,async (req, res) => {
+  const { accountid, userid } = req.user || {};
+  const { bag_no, inward_number, weight } = req.body || {};
+
+  if (!accountid || !userid) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  if (!bag_no || typeof weight !== 'number') {
+    return res.status(400).json({ success: false, error: 'bag_no and numeric weight are required' });
+  }
+
+  const table = `${accountid}_material_outward_bag`;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const { rows: oldRows } = await client.query(
+      `SELECT weight FROM ${table} WHERE bag_no = $1 LIMIT 1`,
+      [bag_no]
+    );
+    if (oldRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Bag not found' });
+    }
+    const oldWeight = oldRows[0].weight;
+
+    if (String(oldWeight) === String(weight)) {
+      await client.query('COMMIT');
+      return res.json({ success: true, updated: false });
+    }
+
+    const auditItem = buildAuditItem('weight', oldWeight, weight, userid);
+    const { rows: updated } = await client.query(
+      `
+      UPDATE ${table} t
+      SET weight = $2,
+          audit_trail = COALESCE(t.audit_trail, '[]'::jsonb) || jsonb_build_array($3::jsonb)
+      WHERE t.bag_no = $1
+      RETURNING bag_no, weight, audit_trail
+      `,
+      [bag_no, weight, JSON.stringify(auditItem)]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true, updated: true, row: updated[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e);
+    return res.status(500).json({ success: false, error: 'Internal error' });
+  } finally {
+    client.release();
+  }
+});
+
+// PUT /api/materialinward/update-bag-weight
+router.put('/update-inwardbag-weight', authenticate, checkAccess('Operations.RMS.Edit') ,async (req, res) => {
+  const { accountid, userid } = req.user || {};
+  const { bag_no, inward_number, weight } = req.body || {};
+
+  if (!accountid || !userid) return res.status(401).json({ success: false, error: 'Unauthorized' });
+  if (!bag_no || typeof weight !== 'number') {
+    return res.status(400).json({ success: false, error: 'bag_no and numeric weight are required' });
+  }
+
+  const table = `${accountid}_material_inward_bag`;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    // Fetch old value
+    const { rows: oldRows } = await client.query(
+      `SELECT weight FROM ${table} WHERE bag_no = $1 LIMIT 1`,
+      [bag_no]
+    );
+    if (oldRows.length === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ success: false, error: 'Bag not found' });
+    }
+    const oldWeight = oldRows[0].weight;
+
+    // If no change, just return success (nothing to log)
+    if (String(oldWeight) === String(weight)) {
+      await client.query('COMMIT');
+      return res.json({ success: true, updated: false });
+    }
+
+    // Append audit item and update in one go
+    const auditItem = buildAuditItem('weight', oldWeight, weight, userid);
+    const { rows: updated } = await client.query(
+      `
+      UPDATE ${table} t
+      SET weight = $2,
+          audit_trail = COALESCE(t.audit_trail, '[]'::jsonb) || jsonb_build_array($3::jsonb)
+      WHERE t.bag_no = $1
+      RETURNING bag_no, weight, audit_trail
+      `,
+      [bag_no, weight, JSON.stringify(auditItem)]
+    );
+
+    await client.query('COMMIT');
+    return res.json({ success: true, updated: true, row: updated[0] });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e);
+    return res.status(500).json({ success: false, error: 'Internal error' });
+  } finally {
+    client.release();
   }
 });
 

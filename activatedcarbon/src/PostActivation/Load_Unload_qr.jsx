@@ -31,9 +31,9 @@ import DoneAllIcon from "@mui/icons-material/DoneAll";
 import RefreshIcon from "@mui/icons-material/Refresh";
 import LabelOutlinedIcon from "@mui/icons-material/LabelOutlined";
 import axios from "axios";
-import PrintLabelButton from "../QR/PrintLabel";
+import PrintLabelButton from "./PrintLabel";
 import QrCodeScannerIcon from "@mui/icons-material/QrCodeScanner";
-import QrScannerDialog from "./QrScannerDialog";
+
 /* ------------------ API client (VITE_URL + cookies + error surfacing) ------------------ */
 const API_URL = import.meta.env.VITE_API_URL;
 const api = axios.create({ baseURL: API_URL || "/", withCredentials: true, timeout: 20000 });
@@ -547,80 +547,233 @@ const moveToStock = async () => {
 // Qr code------------
 
   // --- QR helpers ---
-    const normalizeBagNo = (s) => String(s || "").trim().toUpperCase();
-    function extractBagNoFromScan(raw = "") {
-      const txt = String(raw).trim();
-      if (!txt) return "";
-      try {
-        const u = new URL(txt);
-        for (const k of ["bag_no", "bag", "id"]) {
-          const v = u.searchParams.get(k);
-          if (v) return v;
-        }
-        const last = u.pathname.split("/").filter(Boolean).pop();
-        if (last) return last;
-      } catch {}
-      try {
-        const p = new URLSearchParams(txt);
-        for (const k of ["bag_no", "bag", "id"]) {
-          const v = p.get(k);
-          if (v) return v;
-        }
-      } catch {}
-      const m = txt.match(/[A-Z0-9_:-]+/i);
-      return m?.[0] || txt;
-    }
+  const normalizeBagNo = (s) => String(s || "").trim().toUpperCase();
 
-    // OPTIONAL: keep anti-spam for repeated bad frames
-    const badScanRef = React.useRef({ text: "", t: 0 });
-    const alertOnce = (msg, raw) => {
-      const now = Date.now();
-      if (badScanRef.current.text === raw && now - badScanRef.current.t < 1500) return;
-      badScanRef.current = { text: raw, t: now };
-      try { if (navigator.vibrate) navigator.vibrate(40); } catch {}
-      window.alert(msg);
-    };
+  function extractBagNoFromScan(raw = "") {
+    const txt = String(raw).trim();
+    if (!txt) return "";
 
-    // NEW: return an outcome string so the caller knows what happened
-    function handleQrDetected(raw) {
+    // Try URL first: ?bag_no=... or path segment
+    try {
+      const u = new URL(txt);
+      for (const key of ["bag_no", "bag", "id"]) {
+        const v = u.searchParams.get(key);
+        if (v) return v;
+      }
+      const last = u.pathname.split("/").filter(Boolean).pop();
+      if (last) return last;
+    } catch { /* not a URL */ }
+
+    // Try loose query string (e.g. "bag_no=KOA_...&x=1")
+    try {
+      const p = new URLSearchParams(txt);
+      for (const key of ["bag_no", "bag", "id"]) {
+        const v = p.get(key);
+        if (v) return v;
+      }
+    } catch { /* not a query string */ }
+
+    // Fallback: first token-like chunk
+    const m = txt.match(/[A-Z0-9_:-]+/i);
+    return m?.[0] || txt;
+  }
+
+
+
+  const badScanRef = useRef({ text: "", t: 0 });
+
+  const handleQrDetected = (raw) => {
+      // keep whatever tracking you already have:
+      if (typeof setLastScannedQR === "function") setLastScannedQR(raw);
+
       const candidate = extractBagNoFromScan(raw);
       const bn = normalizeBagNo(candidate);
 
+      // helper: alert once per repeated bad frame
+      const alertOnce = (msg) => {
+        const now = Date.now();
+        if (badScanRef.current.text === raw && now - badScanRef.current.t < 1500) return;
+        badScanRef.current = { text: raw, t: now };
+        if (navigator.vibrate) navigator.vibrate(50);
+        window.alert(msg);
+      };
+
+      // junk / empty
       if (!bn) {
-        alertOnce("Not a valid QR.", raw);
-        return "invalid";
+        alertOnce("Not a valid QR.");
+        return;
       }
 
-      if (loaderBags.length >= 4) {
-        // button is disabled already, but if someone got here, still block
-        alertOnce("Loader is full (max 4).", raw);
-        return "full";
+      // already in loader? do nothing
+      if (loaderBags.some(b => normalizeBagNo(b.bag_no) === bn)) return;
+
+      // must exist in Available
+      const idx = available.findIndex(b => normalizeBagNo(b.bag_no) === bn);
+      if (idx === -1) {
+        alertOnce(`Not a valid QR for this station (bag not in Available): ${bn}`);
+        return;
       }
 
-      // already loaded? (silent)
-      if (loaderBags.some(b => normalizeBagNo(b.bag_no) === bn)) {
-        return "duplicate";
-      }
+      // cap = 4 bags (silent if full as per your preference)
+      if (loaderBags.length >= 4) return;
 
-      // must be in Available
-      const found = available.find(b => normalizeBagNo(b.bag_no) === bn);
-      if (!found) {
-        alertOnce(`Not a valid QR for this station (bag not in Available): ${bn}`, raw);
-        return "notfound";
-      }
+      const bag = available[idx];
 
-      // load it
+      // use your existing helper if present
       if (typeof addBagToLoader === "function") {
-        addBagToLoader(found);
+        addBagToLoader(bag);
       } else {
-        setLoaderBags(prev => [...prev, found]);
+        // fallback: add to loader & remove from available
+        setLoaderBags(prev => [...prev, bag]);
         setAvailable(prev => prev.filter(x => normalizeBagNo(x.bag_no) !== bn));
       }
 
-      try { if (navigator.vibrate) navigator.vibrate(25); } catch {}
-      return "loaded";
-    }
-//-----------------
+      // success: no alert/snackbar
+      if (navigator.vibrate) navigator.vibrate(30);
+    };
+
+
+
+  function QrScannerDialog({ open, onClose, onDetected }) {
+    const videoRef = useRef(null);
+    const canvasRef = useRef(null);
+    const streamRef = useRef(null);
+    const rafRef = useRef(0);
+    const stopZXingRef = useRef(null);
+
+    // Clean up any running streams/loops/backends
+    const cleanup = () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current);
+      rafRef.current = 0;
+      try { stopZXingRef.current?.(); } catch {}
+      stopZXingRef.current = null;
+      const s = streamRef.current;
+      if (s) {
+        s.getTracks().forEach(t => t.stop());
+        streamRef.current = null;
+      }
+      if (videoRef.current) videoRef.current.srcObject = null;
+    };
+
+    useEffect(() => {
+      if (!open) return;
+      let cancelled = false;
+
+      (async () => {
+        // If iOS → go straight to ZXing
+        const preferZXing = isIOS() || !(await canUseBarcodeDetector());
+
+        if (!preferZXing) {
+          // ------- BarcodeDetector path (Android/Chromium) -------
+          try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: { ideal: "environment" } },
+              audio: false,
+            });
+            if (cancelled) return;
+            streamRef.current = stream;
+            const video = videoRef.current;
+            video.srcObject = stream;
+            await video.play();
+
+            const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+
+            const tick = async () => {
+              if (cancelled) return;
+              const v = videoRef.current;
+              const c = canvasRef.current;
+              if (!v || !c || v.readyState < 2) {
+                rafRef.current = requestAnimationFrame(tick);
+                return;
+              }
+              // draw the current frame
+              c.width = v.videoWidth || 640;
+              c.height = v.videoHeight || 480;
+              const ctx = c.getContext("2d", { willReadFrequently: true });
+              ctx.drawImage(v, 0, 0, c.width, c.height);
+
+              try {
+                const results = await detector.detect(c);
+                if (results?.length) {
+                  const value = results[0]?.rawValue ?? "";
+                  if (value) {
+                    onDetected?.(value);
+                    cleanup();
+                    onClose?.();
+                    return;
+                  }
+                }
+              } catch { /* ignore frame errors */ }
+              rafRef.current = requestAnimationFrame(tick);
+            };
+            rafRef.current = requestAnimationFrame(tick);
+            return; // running BD path
+          } catch (e) {
+            // Fall through into ZXing if BD path failed to start
+            console.warn("BarcodeDetector path failed, falling back to ZXing:", e);
+          }
+        }
+
+        // ------- ZXing fallback / iOS default -------
+        try {
+          const { BrowserMultiFormatReader } = await import("@zxing/browser");
+          const reader = new BrowserMultiFormatReader();
+
+          // Pick a sensible camera (prefer back)
+          const devices = await BrowserMultiFormatReader.listVideoInputDevices();
+          const back = devices.find(d => /back|rear|environment/i.test(d.label));
+          const deviceId = back?.deviceId ?? devices.at(-1)?.deviceId ?? undefined;
+
+          const controls = await reader.decodeFromVideoDevice(
+            deviceId,
+            videoRef.current,
+            (result, err, ctl) => {
+              if (cancelled) return;
+              if (result) {
+                const value = result.getText();
+                try { onDetected?.(value); } finally {
+                  ctl.stop(); // stop camera
+                  onClose?.();
+                }
+              }
+            }
+          );
+
+          // Expose a stop function for cleanup()
+          stopZXingRef.current = () => {
+            try { controls.stop(); } catch {}
+            try { reader.reset(); } catch {}
+          };
+        } catch (e) {
+          console.error("ZXing failed to start:", e);
+        }
+      })();
+
+      return () => {
+        cancelled = true;
+        cleanup();
+      };
+    }, [open, onClose, onDetected]);
+
+    return (
+      <Dialog open={open} onClose={() => { cleanup(); onClose?.(); }} fullWidth maxWidth="xs">
+        <DialogTitle>Scan QR</DialogTitle>
+        <DialogContent>
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline   // critical for iOS Safari
+            muted
+            style={{ width: "100%", borderRadius: 8 }}
+          />
+          <canvas ref={canvasRef} style={{ display: "none" }} />
+          <Typography variant="body2" sx={{ mt: 1 }} color="text.secondary">
+            Point the camera at a QR code…
+          </Typography>
+        </DialogContent>
+      </Dialog>
+    );
+  }
 
   return (
     <Box sx={{ p: { xs: 1, md: 2 }, width: "100%" }}>
@@ -1101,13 +1254,7 @@ const moveToStock = async () => {
      { <QrScannerDialog
         open={scanOpen}
         onClose={() => setScanOpen(false)}
-        closeOnScan // auto-close after ANY detection
-        onDetected={(text) => {
-          const outcome = handleQrDetected(text);
-          // no need to setScanOpen(false); the dialog closes itself on detection
-          // optional: if you want to keep scanning on "duplicate", you could instead
-          // pass closeOnScan={false} and manually close only for certain outcomes.
-        }}
+        onDetected={handleQrDetected}
       />}
 
       {/* Floating snackbar for any backend error */}

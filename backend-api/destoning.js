@@ -17,7 +17,7 @@ const { authenticate } = require('./authenticate.js');
 
 
 
-router.post("/submit-destoning", authenticate, checkAccess("Operations.De-Stoning"), async (req, res) => {
+router.post("/submit-destoning", authenticate, checkAccess("Operations.Activation.De-Stoning"), async (req, res) => {
   const { accountid } = req.user;
   const { bag_nos } = req.body; // array of bag_no
   const table = `${accountid}_kiln_output`;
@@ -188,7 +188,7 @@ router.get("/status", authenticate, async (req, res) => {
   }
 });
 
-router.post("/load", authenticate, checkAccess("Operations.De-Stoning"), async (req, res) => {
+router.post("/load", authenticate, checkAccess("Operations.Activation.De-Stoning"), async (req, res) => {
   const { accountid, userid } = req.user;
   const destoningTable = `${accountid}_destoning`;
   const kilnTable = `${accountid}_kiln_output`;

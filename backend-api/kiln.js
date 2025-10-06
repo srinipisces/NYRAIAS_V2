@@ -548,7 +548,7 @@ router.get("/kilnFeedQuality", authenticate,async(req,res) => {
     ${table} 
   WHERE 
     kiln_quality_updt is not null and grade in ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')
-    order by kiln_feed_quality_sysentry desc limit 10
+    order by kiln_feed_quality_sysentry desc 
     `
   const result = await pool.query(que);
     const rows = result.rows;

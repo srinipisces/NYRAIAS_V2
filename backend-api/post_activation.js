@@ -133,7 +133,7 @@ router.get('/status',authenticate,async (req, res) => {
 
 
 
-router.post('/createlabel', authenticate, checkAccess('Operations.Re-Process'), async (req, res) => {
+router.post('/createlabel', authenticate, checkAccess('Operations.PostActivation.Screening'), async (req, res) => {
   
   function assertSafeIdent(ident) {
   if (!/^[a-z0-9_]+$/i.test(ident)) throw new Error('unsafe ident');
@@ -791,6 +791,169 @@ router.get("/records", authenticate, async (req, res) => {
     return res.status(500).json({ error: "Internal server error" });
   }
 });
+
+
+/**
+ * GET /api/status_screening
+ * - Always uses current day (and yesterday); no ?date
+ * - Inward:   <accountid>_destoning (screening_inward_time, screening_bag_weight, ds_bag_no)
+ * - Outward:  <accountid>_screening (screening_out_dt, weight, bag_no)
+ * - Counters use half-open ranges; last10 lists have NO date filter.
+ */
+router.get("/status_screening", authenticate, async (req, res) => {
+  const safeTable = (base) => {
+    if (!/^[a-z0-9_]+$/i.test(base)) throw new Error("Invalid accountid/table name");
+    return base;
+  };
+  const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  const addDays = (d, n) => {
+    const x = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+    x.setDate(x.getDate() + n);
+    return x;
+  };
+  const ymd = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const ddmmyy = (d) =>
+    `${String(d.getDate()).padStart(2, "0")}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getFullYear()).slice(-2)}`;
+
+  const { accountid } = req.user || {};
+  if (!accountid) return res.status(401).json({ error: "Unauthorized: missing accountid" });
+
+  try {
+    const destoning = `${safeTable(accountid)}_destoning`;
+    const screening = `${safeTable(accountid)}_screening_outward`;
+
+    const now = new Date();
+    const todayStart = startOfDay(now);
+    const todayEnd = addDays(todayStart, 1);
+    const yestStart = addDays(todayStart, -1);
+    const yestEnd = todayStart;
+
+    const pTodayStart = ymd(todayStart);
+    const pTodayEnd = ymd(todayEnd);
+    const pYestStart = ymd(yestStart);
+    const pYestEnd = ymd(yestEnd);
+
+    const todayInwardQ = pool.query(
+      `
+      SELECT
+        COUNT(ds_bag_no)::int                            AS loaded_count,
+        COALESCE(SUM(screening_bag_weight), 0.0)::float8 AS loaded_total_weight
+      FROM ${destoning}
+      WHERE screening_inward_time IS NOT NULL
+        AND screening_inward_time >= $1::timestamp
+        AND screening_inward_time <  $2::timestamp
+      `,
+      [pTodayStart, pTodayEnd]
+    );
+
+    const todayOutwardQ = pool.query(
+      `
+      SELECT
+        COUNT(bag_no)::int                 AS output_count,
+        COALESCE(SUM(weight), 0.0)::float8 AS output_total_weight
+      FROM ${screening}
+      WHERE screening_out_dt >= $1::timestamp
+        AND screening_out_dt <  $2::timestamp
+      `,
+      [pTodayStart, pTodayEnd]
+    );
+
+    const yestInwardQ = pool.query(
+      `
+      SELECT
+        COUNT(ds_bag_no)::int                            AS loaded_count,
+        COALESCE(SUM(screening_bag_weight), 0.0)::float8 AS loaded_total_weight
+      FROM ${destoning}
+      WHERE screening_inward_time IS NOT NULL
+        AND screening_inward_time >= $1::timestamp
+        AND screening_inward_time <  $2::timestamp
+      `,
+      [pYestStart, pYestEnd]
+    );
+
+    const yestOutwardQ = pool.query(
+      `
+      SELECT
+        COUNT(bag_no)::int                 AS output_count,
+        COALESCE(SUM(weight), 0.0)::float8 AS output_total_weight
+      FROM ${screening}
+      WHERE screening_out_dt >= $1::timestamp
+        AND screening_out_dt <  $2::timestamp
+      `,
+      [pYestStart, pYestEnd]
+    );
+
+    // Global last-10 lists (no date filter)
+    const last10LoadedQ = pool.query(
+      `
+      SELECT
+        ds_bag_no                   AS bag_no,
+        screening_bag_weight        AS weight,
+        screening_inward_time::text AS loaded_at
+      FROM ${destoning}
+      WHERE screening_inward_time IS NOT NULL
+      ORDER BY screening_inward_time DESC
+      LIMIT 10
+      `
+    );
+
+    const last10OutputQ = pool.query(
+      `
+      SELECT
+        bag_no,
+        weight,
+        screening_out_dt::text      AS output_at
+      FROM ${screening}
+      ORDER BY screening_out_dt DESC
+      LIMIT 10
+      `
+    );
+
+    const [
+      tInRes, tOutRes, yInRes, yOutRes, last10LoadedRes, last10OutputRes
+    ] = await Promise.all([
+      todayInwardQ, todayOutwardQ, yestInwardQ, yestOutwardQ, last10LoadedQ, last10OutputQ
+    ]);
+
+    const tIn = tInRes.rows[0] || {};
+    const tOut = tOutRes.rows[0] || {};
+    const yIn = yInRes.rows[0] || {};
+    const yOut = yOutRes.rows[0] || {};
+
+    const todayCounters = {
+      loaded: { count: Number(tIn.loaded_count || 0),  totalWeight: Number(tIn.loaded_total_weight || 0) },
+      output: { count: Number(tOut.output_count || 0), totalWeight: Number(tOut.output_total_weight || 0) },
+      delta:  { weight: (Number(tIn.loaded_total_weight || 0) - Number(tOut.output_total_weight || 0)) }
+    };
+
+    const yesterdayCounters = {
+      loaded: { count: Number(yIn.loaded_count || 0),  totalWeight: Number(yIn.loaded_total_weight || 0) },
+      output: { count: Number(yOut.output_count || 0), totalWeight: Number(yOut.output_total_weight || 0) },
+      delta:  { weight: (Number(yIn.loaded_total_weight || 0) - Number(yOut.output_total_weight || 0)) }
+    };
+
+    const last10Loaded = (last10LoadedRes.rows || []).map(r => ({
+      bagNo: r.bag_no, weight: Number(r.weight) || 0, loadedAt: r.loaded_at
+    }));
+    const last10Output = (last10OutputRes.rows || []).map(r => ({
+      bagNo: r.bag_no, weight: Number(r.weight) || 0, outputAt: r.output_at
+    }));
+
+    return res.json({
+      today: ddmmyy(todayStart),
+      yesterday: ddmmyy(yestStart),
+      todayCounters,
+      yesterdayCounters,
+      last10Loaded,
+      last10Output
+    });
+  } catch (err) {
+    console.error(new Date().toLocaleString(), " /status_screening error:", err);
+    return res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 
 module.exports = router;

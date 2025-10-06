@@ -17,7 +17,7 @@ const lazyWithTabName = (importer, tabName) =>
 const LabTab = React.lazy(() => import('./Quality'));
 
 // Load_Unload with just tabName baked in
-const ScreeningTab     = lazyWithTabName(() => import('./Load_Unload'), 'Screening');
+const ScreeningTab     = lazyWithTabName(() => import('./Screening'), 'Screening');
 const CrushingTab      = lazyWithTabName(() => import('./Load_Unload'), 'Crushing');
 const DeDustingTab     = lazyWithTabName(() => import('./Load_Unload'), 'De-Dusting');
 const DeMagnatizingTab = lazyWithTabName(() => import('./Load_Unload'), 'De-Magnetize');

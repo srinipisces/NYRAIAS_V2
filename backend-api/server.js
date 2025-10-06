@@ -61,6 +61,7 @@ pool.connect()
     app.use('/api/post_activation', require('./post_activation'));
     app.use('/api/labels' ,require('./labels'))
     app.use('/api/receivables' ,require('./receivables.js'))
+    app.use('/api/activation' ,require('./activation.js'))
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {
