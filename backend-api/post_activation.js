@@ -133,7 +133,7 @@ router.get('/status',authenticate,async (req, res) => {
 
 
 
-router.post('/createlabel', authenticate, checkAccess('Operations.PostActivation.Screening'), async (req, res) => {
+router.post('/createlabel', authenticate, checkAccess('Operations.PostActivation'), async (req, res) => {
   
   function assertSafeIdent(ident) {
   if (!/^[a-z0-9_]+$/i.test(ident)) throw new Error('unsafe ident');
@@ -954,7 +954,126 @@ router.get("/status_screening", authenticate, async (req, res) => {
   }
 });
 
+router.post(
+  '/load_bags_screening',
+  authenticate,
+  checkAccess('Operations.PostActivation.Screening'),
+  async (req, res) => {
+    function assertSafeIdent(ident) {
+      if (!/^[a-z0-9_]+$/i.test(ident)) throw new Error('unsafe ident');
+    }
 
+    const { accountid, userid } = req.user || {};
+    
+
+    // Accept "bags" or "loaded_bag_details"
+    const incoming = Array.isArray(req.body?.bags)
+      ? req.body.bags
+      : (Array.isArray(req.body?.loaded_bag_details) ? req.body.loaded_bag_details : []);
+    if (!incoming.length) return res.status(400).json({ error: 'No bags provided.' });
+
+    // Normalize & validate
+    const details = [];
+    let totalWeight = 0;
+    for (const b of incoming) {
+      const bag_no = (b?.bag_no || '').trim();
+      const w = Number(b?.weight);
+      if (!bag_no) return res.status(400).json({ error: 'Each bag must have a bag_no.' });
+      if (!Number.isFinite(w) || w <= 0) {
+        return res.status(400).json({ error: `Invalid weight for bag ${bag_no}.` });
+      }
+      const grade = (b?.grade ?? null);
+      details.push({ bag_no, weight: w, grade });
+      //details.push({ bag_no, weight: w });
+      totalWeight += w;
+    }
+
+    // Target "in" table
+    const rpTable = `${accountid}_screening_outward`;
+
+    // Prefix -> { table, id column, STATUS COLUMN }
+    // DSO uses final_destination; all others use stock_status
+    const SRC_BY_PREFIX = {
+      DSO: { table: `${accountid}_destoning`,        id_col: 'ds_bag_no', status_col: 'final_destination' },
+      SCR: { table: `${accountid}_screening_outward`,    id_col: 'bag_no',    status_col: 'stock_status'      },
+      CRU: { table: `${accountid}_crushing_out`,     id_col: 'bag_no',    status_col: 'stock_status'      },
+      DDU: { table: `${accountid}_de_dusting_out`,   id_col: 'bag_no',    status_col: 'stock_status'      },
+      DMZ: { table: `${accountid}_de_magnetize_out`, id_col: 'bag_no',    status_col: 'stock_status'      },
+      BLD: { table: `${accountid}_blending_out`, id_col: 'bag_no',    status_col: 'stock_status'      },
+    };
+
+    // Group bag_nos by prefix
+    const groups = { DSO: [], SCR: [], CRU: [], DDU: [], DMZ: [],BLD: [], _unknown: [] };
+    for (const { bag_no } of details) {
+      const up = bag_no.toUpperCase();
+      if      (up.startsWith('DSO')) groups.DSO.push(bag_no);
+      else if (up.startsWith('SCR')) groups.SCR.push(bag_no);
+      else if (up.startsWith('CRU')) groups.CRU.push(bag_no);
+      else if (up.startsWith('DDU')) groups.DDU.push(bag_no);
+      else if (up.startsWith('DMZ')) groups.DMZ.push(bag_no);
+      else if (up.startsWith('BLD')) groups.BLD.push(bag_no);
+      else groups._unknown.push(bag_no);
+    }
+
+    const statusValue = `screening_loaded`; // e.g., "Screening_loaded"
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // Prevent double-start if a lot is already active
+      const { rows: active } = await client.query(
+        `SELECT 1 FROM ${rpTable} WHERE total_out_weight IS NULL LIMIT 1`
+      );
+      if (active.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Machine is busy with an active lot.' });
+      }
+
+      // update destoning table if the file name starts with DSO
+      const insertSql = `
+        update  ${rpTable} set screening_inward_time = current_timestamp ,
+        screening_machine = , screening_bag_weight , userid_screening_inward)
+        VALUES ($1::jsonb, $2, $3)
+        RETURNING lot_id, loaded_dttm, loaded_weight, loaded_bags, bags_loaded_userid
+      `;
+      const { rows: lotRows } = await client.query(insertSql, [
+        JSON.stringify(details), totalWeight, userid
+      ]);
+      const lot = lotRows[0];
+
+      // Mark source bags unavailable (per table’s status column)
+      const updatedCounts = { DSO: 0, SCR: 0, CRU: 0, DDU: 0, DMZ: 0 };
+      for (const prefix of Object.keys(SRC_BY_PREFIX)) {
+        const bagList = groups[prefix];
+        if (!bagList.length) continue;
+
+        const { table, id_col, status_col } = SRC_BY_PREFIX[prefix];
+        const sql = `
+          UPDATE ${table}
+             SET ${status_col} = $1
+           WHERE ${id_col} = ANY($2)
+        `;
+        const r = await client.query(sql, [statusValue, bagList]);
+        updatedCounts[prefix] = r.rowCount || 0;
+      }
+
+      await client.query('COMMIT');
+      return res.json({
+        success: true,
+        lot,
+        updated: updatedCounts,
+        unknown_prefix: groups._unknown
+      });
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('load_bags failed:', err);
+      return res.status(500).json({ error: 'Failed to start re-process (load bags).' });
+    } finally {
+      client.release();
+    }
+  }
+);
 
 module.exports = router;
 

@@ -387,3 +387,166 @@ DROP TRIGGER IF EXISTS trg_set_bag_no_on_blending_out ON testbed_blending_out;
 CREATE TRIGGER trg_set_bag_no_on_blending_out
 BEFORE INSERT ON testbed_blending_out
 FOR EACH ROW EXECUTE FUNCTION trg_set_bag_no_generic_out();
+
+
+
+create table testbed_postactivation
+(
+  operations text not null,
+  lot_id TEXT,
+  bag_no text primary key,
+  bag_weight numeric not null,
+  grade text,
+  bag_no_created_dttm  timestamp not null,
+  bag_created_userid text not null,
+  stock_status text,
+  stock_status_change_dttime timestamp,
+  stock_change_userid text,
+  quality jsonb,
+  reload_time timestamp,
+  reload_weight numeric,
+  reload_userid text,
+  reload_machine text,
+  audit_trail jsonb
+);
+
+CREATE OR REPLACE FUNCTION trg_set_bag_no_postactivation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  date_str       TEXT;
+  alias_code     TEXT;
+  last_suffix    INTEGER;
+  settings_tbl   TEXT;
+  op_raw         TEXT;
+  op_norm        TEXT; -- canonical: lowercased, spaces/hyphens -> underscores
+  code           TEXT; -- SCR|CRU|DDU|DMZ|BLD
+  g              TEXT;
+  patt           TEXT;
+  last_bag       TEXT;
+  lock_key       TEXT;
+BEGIN
+  -- Enforce: caller must NOT supply bag_no
+  IF NEW.bag_no IS NOT NULL THEN
+    RAISE EXCEPTION 'bag_no must not be provided by caller (it is auto-generated)';
+  END IF;
+
+  -- Normalize inputs
+  g := TRIM(COALESCE(NEW.grade, ''));
+  op_raw := TRIM(COALESCE(NEW.operations, ''));
+  -- canonical operations: lowercase + spaces/hyphens -> underscores
+  op_norm := REGEXP_REPLACE(LOWER(op_raw), '[-\s]+', '_', 'g');
+
+  -- Map operations -> code using canonical form
+  code := CASE op_norm
+            WHEN 'screening'      THEN 'SCR'
+            WHEN 'crushing'       THEN 'CRU'
+            WHEN 'de_dusting'     THEN 'DDU'
+            WHEN 'de_magnetize'   THEN 'DMZ'
+            WHEN 'blending'       THEN 'BLD'
+            ELSE NULL
+          END;
+
+  IF code IS NULL THEN
+    RAISE EXCEPTION 'Unsupported operations value: "%". Expected one of Screening, Crushing, De-Dusting, De-Magnetize, Blending.', NEW.operations;
+  END IF;
+
+  date_str := TO_CHAR(NOW(), 'DDMMYY');
+
+  -- <account>_postactivation -> <account>_settings
+  settings_tbl := REGEXP_REPLACE(TG_TABLE_NAME, '_postactivation$', '_settings');
+
+  -- Try to fetch alias from <account>_settings.settings->'Output_Grades'->grade->>'alias'
+  BEGIN
+    EXECUTE format(
+      $sql$
+      SELECT CASE
+               WHEN jsonb_typeof(settings->'Output_Grades'->%L) = 'object'
+                 THEN NULLIF(settings->'Output_Grades'->%L->>'alias','')
+               ELSE NULL
+             END
+        FROM %I
+       LIMIT 1
+      $sql$,
+      g, g, settings_tbl
+    )
+    INTO alias_code;
+  EXCEPTION
+    WHEN undefined_table THEN
+      alias_code := NULL;
+  END;
+
+  -- sanitize alias; allow alphanumerics only
+  IF alias_code IS NOT NULL THEN
+    alias_code := REGEXP_REPLACE(alias_code, '[^A-Za-z0-9]+', '', 'g');
+    IF alias_code = '' THEN alias_code := NULL; END IF;
+  END IF;
+
+  -- Prefix: CODE[_ALIAS]_DDMMYY_
+  IF alias_code IS NOT NULL THEN
+    NEW.bag_no := code || '_' || alias_code || '_' || date_str || '_';
+  ELSE
+    NEW.bag_no := code || '_' || date_str || '_';
+  END IF;
+
+  -- Pattern for THIS code/alias/date (guards suffix extraction)
+  patt := '^' || code || '(_[A-Za-z0-9]+)?_' || date_str || '_[0-9]{3}$';
+
+  -- Concurrency guard: per (table,code,alias,date)
+  lock_key := TG_TABLE_NAME || '|' || code || '|' || COALESCE(alias_code,'') || '|' || date_str;
+  PERFORM pg_advisory_xact_lock(hashtext(lock_key));
+
+  -- Find the LAST generated bag for the same operations (canonical), same date/code[/alias]
+  EXECUTE format(
+    $sql$
+    SELECT bag_no
+      FROM %I
+     WHERE REGEXP_REPLACE(LOWER(operations), '[-\s]+', '_', 'g') = %L
+       AND bag_no ~ %L
+     ORDER BY bag_no_created_dttm DESC NULLS LAST, bag_no DESC
+     LIMIT 1
+    $sql$,
+    TG_TABLE_NAME, op_norm, patt
+  )
+  INTO last_bag;
+
+  IF last_bag IS NULL THEN
+    last_suffix := 0;
+  ELSE
+    last_suffix := CAST(SUBSTRING(last_bag FROM '[0-9]{3}$') AS INTEGER);
+    IF last_suffix IS NULL THEN
+      last_suffix := 0;
+    END IF;
+  END IF;
+
+  -- Increment with rollover after 999 → 001
+  IF last_suffix >= 999 THEN
+    last_suffix := 0;
+  END IF;
+
+  NEW.bag_no := NEW.bag_no || LPAD((last_suffix + 1)::TEXT, '0', 3);
+
+  -- Ensure created timestamp if caller didn't pass one
+  IF NEW.bag_no_created_dttm IS NULL THEN
+    NEW.bag_no_created_dttm := NOW();
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+-- Trigger
+DROP TRIGGER IF EXISTS set_bag_no_on_postactivation ON testbed_postactivation;
+CREATE TRIGGER set_bag_no_on_postactivation
+BEFORE INSERT ON testbed_postactivation
+FOR EACH ROW
+EXECUTE FUNCTION trg_set_bag_no_postactivation();
+
+-- Optional index to accelerate the WHERE and ORDER BY
+CREATE INDEX IF NOT EXISTS ix_postact_ops_time
+ON testbed_postactivation (
+  (regexp_replace(lower(operations), '[-\s]+', '_', 'g')),
+  bag_no_created_dttm DESC
+);
+
