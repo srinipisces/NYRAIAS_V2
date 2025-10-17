@@ -1232,10 +1232,10 @@ set menu_structure = '{
   "menu_structure":{
   "Dashboard": [],
   "Operations": {
-    "Receivables": ["Security", "Lab","Edit"],
-    "RMS": ["Raw-Material Inward", "Crusher Performance", "Raw-Material Outward","Edit"],
-    "Activation": ["Kiln Feed","Kiln Feed Quality","Boiler Performance","Kiln Temperature","Kiln Output","De-Stoning","De-Stoning Quality","Edit"],
-    "PostActivation": ["Quality","Screening","Crushing","De-Dusting","De-Magnetize","Blending","Edit"],
+    "Receivables": ["Security", "Lab","Edit","Reports"],
+    "RMS": ["Raw-Material Inward", "Crusher Performance", "Raw-Material Outward","Edit","Reports"],
+    "Activation": ["Kiln Feed Quality","Kiln Feed","Kiln Output Quality","Boiler Performance","Kiln Temperature","Kiln Output","De-Stoning","De-Stoning Quality","Edit","Reports"],
+    "PostActivation": ["Quality","Screening","Crushing","De-Dusting","De-Magnetize","Blending","Edit","Reports"],
     "Delivery": []
   },
   "Reports": ["Receivables","RMS","Activation","PostActivation","Stock","General"],

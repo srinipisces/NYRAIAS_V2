@@ -6,10 +6,7 @@ import * as React from "react";
  * - bag, startMs, index, nowMs
  * - layout: { m, yTimeline, pxPerMin, minutes, innerWidth }
  *   where innerWidth = contentW (usable width between margins)
- * - options?: {
- *     chipSide?: 'auto' | 'left' | 'right',
- *     lane?: 'left'|'top1'|'bot1'|'top2'|'bot2'   // <-- optional lane override
- *   }
+ * - options?: { chipSide?: 'auto' | 'left' | 'right' }  // which side of dot the chip sits
  */
 export default function MovingBag({
   bag,
@@ -25,19 +22,10 @@ export default function MovingBag({
   const elapsedMin = Math.max(0, (nowMs - startMs) / 60000);
   const x = m.left + Math.min(minutes, elapsedMin) * pxPerMin;
 
-  // -----------------------------
-  // Lane-aware vertical placement
-  // -----------------------------
-  // Offsets relative to the red timeline
-  const OFF = {
-    top1: -24, top2: -46, top3: -68,
-    bot1:  24, bot2:  46, bot3:  68,
-  };
-  const lane = options?.lane || "top1";
-  const dy   = OFF[lane] ?? 0;            // vertical offset for this lane
-  const yDot = yTimeline + dy;            // (use this if you want the dot to move with the lane)
-  const chipCenterY = yTimeline + dy;     // current design: chip floats above/below, dot stays on the red line
-
+  // Alternate above/below timeline
+  const isTop = index % 2 === 0;
+  const laneOffset = 36;     // distance from timeline to chip center
+  const chipCenterY = yTimeline + (isTop ? -laneOffset : laneOffset);
 
   // Chip sizing from text
   const padX = 10;
@@ -45,16 +33,11 @@ export default function MovingBag({
   const textLen = Math.max(8, bag.length);
   const chipW = Math.min(240, Math.max(90, textLen * 7 + padX * 2));
 
-  // ---------------------------------------
-  // Side-of-dot decision (left/right/auto)
-  // ---------------------------------------
-  let side = options?.chipSide ?? "auto";
-
-  // If lane == 'left', prefer placing chip to the LEFT of the dot so clusters spread
-  if (options?.lane === "left" && side === "auto") side = "left";
-
+  // Decide chip's X so it "moves with" the circle but stays readable.
+  // Default: keep chip just to the LEFT of the moving circle.
+  let side = options.chipSide;
   if (side === "auto") {
-    // auto-flip to avoid edges
+    // auto-flip to avoid going off-screen edges
     side = (x - chipW - 12 < m.left) ? "right" : "left";
     if (x + chipW + 12 > m.left + innerWidth) side = "left";
   }
@@ -67,13 +50,13 @@ export default function MovingBag({
 
   const chipY = chipCenterY - chipH / 2;
 
-  // Connector: from chip center to the circle center
+  // Connector: always from chip center to the circle center
   const x1 = chipX + chipW / 2;
   const y1 = chipCenterY;
   const x2 = x;
   const y2 = yTimeline;
 
-  // Simple tooltip
+  // Simple tooltip via <title/> (native, fast, works on SVG)
   const loadedAt = new Date(startMs);
   const hh = String(loadedAt.getHours()).padStart(2, "0");
   const mm = String(loadedAt.getMinutes()).padStart(2, "0");

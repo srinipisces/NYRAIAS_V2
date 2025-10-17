@@ -1,6 +1,6 @@
 // Screening.jsx — full component (aligned to Load_Unload model, with requested changes)
 // - No BUSY/IDLE chip, no Start button, unlimited loader items
-// - Status from /api/post_activation/status_screening (today+ yesterday counters + last10)
+// - Status from /api/post_activation/status_cont_load (today+ yesterday counters + last10)
 // - Center column fixed width on laptop/desktop, 100% on mobile
 // - Yesterday counters moved to LEFT panel footer
 // - Output panel: "Machine Output" header, Σ (left) and Δ (right), divider, then Output Grades (create labels)
@@ -104,8 +104,12 @@ export default function Screening({ tabName }) {
   const fetchStatus = async () => {
     setStatusLoading(true);
     try {
-      const { data } = await api.get(`/api/post_activation/status_screening`, { withCredentials: true });
+      const { data } = await api.get(`/api/post_activation/status_cont_load`, {
+        params: { tabname: tabName },   // <-- send tab here
+        withCredentials: true
+      });
       setStatusData(data || null);
+      
     } catch (e) {
       console.error(e);
       showError(e?.message || "Failed to load status.");
@@ -193,7 +197,9 @@ export default function Screening({ tabName }) {
   const today = statusData?.todayCounters;
   const yesterday = statusData?.yesterdayCounters;
   const last10Output = statusData?.last10Output || [];
-
+  const last10Loaded = statusData?.last10Loaded || [];
+  console.log(today);
+  console.log(statusData);
   // Available list filtering
   const sortByDateDesc = (list) =>
     [...list].sort((a, b) => new Date(b?.screening_out_dt ?? 0) - new Date(a?.screening_out_dt ?? 0));
@@ -220,13 +226,19 @@ export default function Screening({ tabName }) {
     if (!Number.isFinite(w) || w <= 0) return;
     setOutSaving(true);
     try {
-      await api.post(`/api/post_activation/createlabel`, { grade, bag_weight: w }, { params: { tabName }, withCredentials: true });
+      const { data } = await api.post(`/api/post_activation/createlabel_cont`, { grade, weight: w }, { params: { tabName }, withCredentials: true });
       setNewLabelWeight((prev) => ({ ...prev, [grade]: "" }));
-      showSuccess("Output bag created");
-      await fetchStatus();
+      showSuccess(`Label created: ${data?.created?.bag_no}`);
+      
+      // update counters without an extra call
+      if (data?.counters) {
+        setStatusData(prev => ({ ...prev, ...data.counters }));
+      }
+      //await fetchStatus();
     } catch (e) {
       console.error(e);
       showError(e?.message || "Failed to create output label.");
+      alert(e?.response?.data?.error || e?.message || 'Failed to create label.');
     } finally {
       setOutSaving(false);
     }
@@ -249,44 +261,71 @@ export default function Screening({ tabName }) {
     setLoadDlg({ open: false, bag: null, weight: "", machine: "" });
 
     // Optimistic counters until backend is wired
-    const applyLocalCountersAfterLoad = (w) => {
-    setStatusData((prev) => {
-        if (!prev) return prev;
-        const today = { ...(prev.todayCounters || {}) };
-        const loaded = { ...(today.loaded || {}) };
-        const output = { ...(today.output || {}) };
-        const newCount = (loaded.count || 0) + 1;
-        const newLoadedW = (Number(loaded.totalWeight) || 0) + (Number(w) || 0);
-        const newDelta = newLoadedW - (Number(output.totalWeight) || 0);
-        return {
-        ...prev,
-        todayCounters: {
-            ...today,
-            loaded: { ...loaded, count: newCount, totalWeight: newLoadedW },
-            delta: { weight: newDelta },
-        },
-        };
-    });
-    };
+    /* const applyLocalCountersAfterLoad = (w) => {
+      setStatusData((prev) => {
+          if (!prev) return prev;
+          const today = { ...(prev.todayCounters || {}) };
+          const loaded = { ...(today.loaded || {}) };
+          const output = { ...(today.output || {}) };
+          const newCount = (loaded.count || 0) + 1;
+          const newLoadedW = (Number(loaded.totalWeight) || 0) + (Number(w) || 0);
+          const newDelta = newLoadedW - (Number(output.totalWeight) || 0);
+          return {
+          ...prev,
+          todayCounters: {
+              ...today,
+              loaded: { ...loaded, count: newCount, totalWeight: newLoadedW },
+              delta: { weight: newDelta },
+          },
+          };
+      });
+      }; */
 
-    // Confirm: add locally + counters + toast
-    const confirmLoadDialog = async () => {
-    const bag = loadDlg.bag;
-    const w = Number(loadDlg.weight);
-    const machine = loadDlg.machine;
-    if (!bag || !Number.isFinite(w) || w <= 0 || !machine) return;
+      // Confirm: add locally + counters + toast
+      const confirmLoadDialog = async () => {
+        const normTab = String(tabName || '').trim();
+        const needsMachine = normTab === 'Screening';
+        const bag = loadDlg.bag;
+        const w = Number(loadDlg.weight);
+        const machine = loadDlg.machine;
+        if (!bag || !Number.isFinite(w) || w <= 0 || (needsMachine && !machine)) return;
 
-    try {
-        addBagToLoader({ ...bag, weight: w, machine });
-        applyLocalCountersAfterLoad(w);
-        showSuccess(`Loaded ${bag.bag_no} (${w} kg) on ${machine}`);
-        closeLoadDialog();
-        // Optionally: await fetchStatus();
-    } catch (e) {
-        console.error(e);
-        showError(e?.message || "Failed to load bag.");
-    }
-    };
+        try {
+          const { data } = await api.post(
+            '/api/post_activation/load_bags_cont',
+            { bag_no: bag.bag_no, weight: w, machine: needsMachine ? machine : null },
+            { params: { tabName: normTab }, withCredentials: true }
+          );
+
+          // remove from available silently
+          if (data?.removedFromAvailable) {
+            setAvailable(prev => prev.filter(x => x.bag_no !== bag.bag_no));
+          }
+          // update counters silently
+          if (data?.counters) {
+            setStatusData(prev => ({
+              ...prev,
+              ...data.counters,
+              todayCounters: data.counters.todayCounters,
+              yesterdayCounters: data.counters.yesterdayCounters,
+              last10Loaded: data.counters.last10Loaded,
+              last10Output: data.counters.last10Output
+            }));
+          }
+
+          // show and close
+          showSuccess(`Loaded ${bag.bag_no} (${w} kg)${needsMachine ? ` on ${machine}` : ''}`);
+          // after successful POST
+          await fetchAvailable();   // same function your Refresh button uses
+          //await fetchStatus();      // if you also refresh the right-side counters
+
+          closeLoadDialog();
+        } catch (e) {
+          console.error(e);
+          alert(e?.response?.data?.error || e?.message || 'Failed to load bag.'); // ask to refresh on 409
+        }
+      };
+
 
 
   // --- UI ---
@@ -305,10 +344,13 @@ export default function Screening({ tabName }) {
         columnSpacing={2}
         rowSpacing={2}
         alignItems="stretch"
-        sx={{ flexWrap: { xs: "wrap", md: "nowrap" } }}
+        sx={{ flexWrap: { xs: "wrap", md: "nowrap" } 
+        }}
       >
         {/* Left: Available Inputs — ALWAYS enabled */}
-        <Grid item xs={12} sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Grid item xs={12} sx={{ flexGrow: 1, minWidth: 0 ,width: { xs: '100%', md: 340 },
+            flexBasis: { xs: '100%', md: 340 },
+            maxWidth: { xs: '100%', md: 340 },}}>
           <Paper sx={{ ...paperSx, height: PAPER_HEIGHT, display: 'flex', flexDirection: 'column', minWidth: 0, overflowX: 'hidden', width: '100%', boxSizing: 'border-box' }}>
             <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
               <Stack direction="row" spacing={1} alignItems="center">
@@ -385,7 +427,7 @@ export default function Screening({ tabName }) {
               <Stack direction="row" spacing={1} alignItems="center" justifyContent="center">
                 <Chip size="small" label={`L: ${yesterday ? yesterday.loaded.count : 0} · ${fmt1(parseNum(yesterday?.loaded.totalWeight))} kg`} />
                 <Chip size="small" label={`Σ: ${fmt1(parseNum(yesterday?.output.totalWeight || 0))} kg`} />
-                <Chip size="small" label={`Δ: ${fmt1(parseNum(yesterday?.delta.weight || 0))} kg`} />
+                {/* <Chip size="small" label={`Δ: ${fmt1(parseNum(yesterday?.delta.weight || 0))} kg`} /> */}
               </Stack>
             </Box>
           </Paper>
@@ -440,22 +482,22 @@ export default function Screening({ tabName }) {
 
             {/* Loader list (no cap) */}
             <Box sx={{ flex: 1, minHeight: { xs: 220, md: 260 }, overflowY: "auto", overflowX: "hidden", pr: 1, width: "100%", scrollbarGutter: "stable" }}>
-              {loaderBags.length === 0 ? (
+              {last10Loaded.length === 0 ? (
                 <Alert severity="info" sx={{ width: "100%" }}>Click the orange arrow to load, or use Scan from the menu.</Alert>
               ) : (
-                loaderBags.map((bag) => (
+                last10Loaded.map((bag) => (
                   <Paper key={bag.bag_no} sx={{ p: 1, mb: 1, border: "1px solid", borderColor: "divider", borderRadius: 2 }}>
                     <Stack direction="row" justifyContent="space-between" alignItems="center">
                       <Box>
-                        <Typography fontSize={13} fontWeight={700}>{bag.bag_no}</Typography>
+                        <Typography fontSize={13} fontWeight={700}>{bag.bagNo}</Typography>
                         <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                           <Chip label={`${fmt1(parseNum(bag?.weight))} kg`} size="small" variant="outlined" />
                           {bag?.grade && <Chip label={bag.grade} size="small" variant="outlined" />}
                         </Stack>
                       </Box>
-                      <IconButton size="small" onClick={() => removeFromLoader(bag)}>
+                     {/*  <IconButton size="small" onClick={() => removeFromLoader(bag)}>
                         <CloseIcon fontSize="small" />
-                      </IconButton>
+                      </IconButton> */}
                     </Stack>
                   </Paper>
                 ))
@@ -517,7 +559,9 @@ export default function Screening({ tabName }) {
         </Grid>
 
         {/* Right: Output */}
-        <Grid item xs={12} sx={{ flexGrow: 1, minWidth: 0 }}>
+        <Grid item xs={12} sx={{ flexGrow: 1, minWidth: 0 ,width: { xs: '100%', md: 340 },
+            flexBasis: { xs: '100%', md: 400 },
+            maxWidth: { xs: '100%', md: 400 },}}>
           <Paper sx={{ ...paperSx, height: { xs: "100%", sm: PAPER_HEIGHT }, display: "flex", flexDirection: "column", boxSizing: "border-box", overflowX: "hidden", width:'100%' }}>
             {/* Header */}
             <Typography variant="subtitle1" sx={{ mb: 0.5 }}>Machine Output</Typography>
@@ -546,7 +590,7 @@ export default function Screening({ tabName }) {
                       <Stack direction="row" spacing={1} alignItems="center" justifyContent="space-between">
                         <Typography fontSize={13}>{g}</Typography>
                         <Stack direction="row" spacing={1} alignItems="center">
-                          <Chip size="small" label={`${count} labels`} />
+                          {/* <Chip size="small" label={`${count} labels`} /> */}
                           <TextField
                             size="small"
                             type="number"
@@ -598,7 +642,7 @@ export default function Screening({ tabName }) {
             )}
 
             {/* Last 10 Output */}
-            <Typography variant="subtitle2">Last 10 Output</Typography>
+            <Typography variant="subtitle2">Last 10 Output of {(today?.output?.count || 0)}</Typography>
             <Box sx={{ overflowX: "hidden", pr: 1, flex: 1, width: "100%", overflowY: 'auto', scrollbarGutter: 'stable' }}>
               {Array.isArray(last10Output) && last10Output.length > 0 ? (
                 last10Output.map((r, i) => (
@@ -607,6 +651,7 @@ export default function Screening({ tabName }) {
                       <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                         <Chip size="small" label={r.bagNo} />
                         <Chip size="small" label={`${fmt1(parseNum(r.weight))} kg`} />
+                        <Chip size="small" label={r.grade} />
                         <PrintLabelButton bag_no={r.bagNo} grade={r.grade} weight={r.weight} heightIn={2.5} />
                       </Stack>
                     </Stack>
@@ -664,20 +709,22 @@ export default function Screening({ tabName }) {
                 fullWidth
                 sx={{ mt: 0.5 }}
                 />
-
-                <FormControl sx={{ mt: 1 }}>
-                <FormLabel>Machine Type</FormLabel>
-                <RadioGroup
-                    row
-                    value={loadDlg.machine}
-                    onChange={(e) =>
-                    setLoadDlg((d) => ({ ...d, machine: e.target.value }))
-                    }
-                >
-                    <FormControlLabel value="Gyro" control={<Radio />} label="Gyro" />
-                    <FormControlLabel value="Shaker" control={<Radio />} label="Shaker" />
-                </RadioGroup>
-                </FormControl>
+                {/* Machine only for Screening */}
+                {tabName === 'Screening' && (
+                  <FormControl sx={{ mt: 1 }}>
+                  <FormLabel>Machine Type</FormLabel>
+                  <RadioGroup
+                      row
+                      value={loadDlg.machine}
+                      onChange={(e) =>
+                      setLoadDlg((d) => ({ ...d, machine: e.target.value }))
+                      }
+                  >
+                      <FormControlLabel value="Gyro" control={<Radio />} label="Gyro" />
+                      <FormControlLabel value="Shaker" control={<Radio />} label="Shaker" />
+                  </RadioGroup>
+                  </FormControl>
+                )}
             </Stack>
             )}
         </DialogContent>
@@ -689,7 +736,7 @@ export default function Screening({ tabName }) {
             disabled={
                 !Number.isFinite(Number(loadDlg.weight)) ||
                 Number(loadDlg.weight) <= 0 ||
-                !loadDlg.machine
+                (tabName === 'Screening' && !loadDlg.machine)  // require machine only for Screening //!loadDlg.machine
             }
             >
             Confirm & Load

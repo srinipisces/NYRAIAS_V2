@@ -43,8 +43,6 @@ export default function KilnOutputPanel({
   const [weight, setWeight] = React.useState("");
   // rows newest-first
   const [rows, setRows] = React.useState([]); // { ts, weight, label, dateStr }
-  const [todayCount, setTodayCount] = React.useState(0);
-  const [todayWeight, setTodayWeight] = React.useState(0);
   // per-day counter (local)
   const [counter, setCounter] = React.useState(startCounter);
   const [currentDateStr, setCurrentDateStr] = React.useState(ddmmyy(new Date()));
@@ -122,27 +120,17 @@ export default function KilnOutputPanel({
       });
 
       // Expecting: { columns, rows } with rows like { bag_no, weight_with_stones, write_timestamp? }
-      /* const mapped = (data?.rows ?? []).map((r) => ({
-        label: r.bag_no,
-        weight: r.weight_with_stones ?? r.weight ?? null,
-        dateStr: ddmmyy(new Date()),
-      })); */
       const mapped = (data?.rows ?? []).map((r) => ({
         label: r.bag_no,
-        weight: r.weight ?? r.weight_with_stones ?? null,
+        weight: r.weight_with_stones ?? r.weight ?? null,
         dateStr: ddmmyy(new Date()),
       }));
 
       // keep newest-first; cap to 10 if backend doesn’t
       setRows(mapped.slice(0, 10));
-      // counters for "today" (IST, computed by backend)
-      setTodayCount(Number(data?.today_count ?? 0));
-      setTodayWeight(Number(data?.today_weight ?? 0));
     } catch (err) {
       setListErr(err?.message || "Failed to load outputs");
       setRows([]); // show empty state gracefully
-      setTodayCount(0);
-      setTodayWeight(0);
     } finally {
       setLoadingList(false);
     }
@@ -223,11 +211,11 @@ export default function KilnOutputPanel({
             {/* Counters */}
             <Paper variant="outlined" sx={{ p: 1 }}>
               <Typography variant="subtitle2" fontWeight={700} gutterBottom>
-                Counters - Output
+                Counters
               </Typography>
               <Stack direction="row" spacing={1}>
-                <Chip label={`No. of Bags: ${todayCount}`} />
-                <Chip color="primary" label={`Weight: ${todayWeight.toFixed(2)} kg`} />
+                <Chip label={`Loaded: ${loadedCount}`} />
+                <Chip color="primary" label={`Output: ${outputCount}`} />
               </Stack>
             </Paper>
           </Stack>

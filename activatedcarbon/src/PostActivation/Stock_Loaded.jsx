@@ -14,79 +14,6 @@ import RemoveRoundedIcon from "@mui/icons-material/RemoveRounded";
 
 const API = import.meta.env.VITE_API_URL;
 
-const EXCLUDE_QUALITY_KEYS = new Set(["remarks", "remark"]);
-
-// ---------- helpers for quality rendering ----------
-function sortMetricKeys(keys) {
-  return Array.from(new Set(keys)).sort((a, b) =>
-    a.localeCompare(b, undefined, { numeric: true })
-  );
-}
-
-function getQualityVal(q, key) {
-  if (!q) return null;
-  if (Array.isArray(q)) {
-    const hit = q.find(
-      (it) => it?.key === key || it?.label === key || it?.name === key
-    );
-    if (!hit) return null;
-    if (typeof hit === "object") {
-      return hit.value ?? hit.val ?? hit.v ?? hit.min ?? hit.max ?? JSON.stringify(hit);
-    }
-    return hit;
-  }
-  if (typeof q === "object") {
-    const v = q[key];
-    return (v && typeof v === "object" && "value" in v) ? v.value : v;
-  }
-  return null;
-}
-
-function fmtQualityVal(v) {
-  if (v == null) return "";
-  if (typeof v === "number") return Number.isFinite(v) ? String(v) : "";
-  if (typeof v === "string") return v;
-  try { return JSON.stringify(v); } catch { return String(v); }
-}
-
-function getRowQualityKeys(row, metricsByGrade) {
-  const grade = row?.grade;
-  let keys = [];
-  if (grade && Array.isArray(metricsByGrade?.[grade])) {
-    keys = metricsByGrade[grade].filter(
-      (k) => !EXCLUDE_QUALITY_KEYS.has(k.toLowerCase())
-    );
-  } else {
-    const q = row?.quality;
-    if (Array.isArray(q)) {
-      keys = q.map((it) => it?.key ?? it?.label ?? it?.name).filter(Boolean);
-    } else if (q && typeof q === "object") {
-      keys = Object.keys(q);
-    }
-    keys = keys.filter((k) => !EXCLUDE_QUALITY_KEYS.has(String(k).toLowerCase()));
-  }
-  return sortMetricKeys(keys);
-}
-
-function getRowRemarks(row) {
-  if (row && row.remarks != null) return row.remarks;
-  const q = row?.quality;
-  if (!q) return "";
-  if (Array.isArray(q)) {
-    const hit = q.find((it) => {
-      const k = (it?.key ?? it?.label ?? it?.name ?? "").toLowerCase();
-      return k === "remarks" || k === "remark";
-    });
-    if (!hit) return "";
-    if (typeof hit === "object") return hit.value ?? hit.text ?? hit.remark ?? "";
-    return hit;
-  }
-  if (typeof q === "object") {
-    return q.remarks ?? q.remark ?? "";
-  }
-  return "";
-}
-
 function normalizeMetricsMap(raw) {
   const out = {};
   if (!raw || typeof raw !== "object") return out;
@@ -109,7 +36,7 @@ function normalizeMetricsMap(raw) {
 const miniThStyle = { border: "1px solid rgba(0,0,0,0.2)", padding: "2px 6px", fontSize: 12, textAlign: "left", whiteSpace: "nowrap" };
 const miniTdStyle = { border: "1px solid rgba(0,0,0,0.12)", padding: "3px 6px", fontSize: 12, whiteSpace: "nowrap" };
 
-export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, rowPx = 32 }) {
+export default function Stock_Loaded({ panels = [], barHeight = 52, visibleRows = 10, rowPx = 32 }) {
   const [expandedKey, setExpandedKey] = React.useState(null);
   const [data, setData] = React.useState({}); // { [key]: { columns, rows } }
   const [loading, setLoading] = React.useState({});
@@ -128,29 +55,9 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
   const headerPx = 38;
   const viewportPx = headerPx + visibleRows * rowPx;
 
-  const hasActiveFilter = (f) => !!(f && (f.bag_no || f.status || f.created_from || f.created_to));
-
-  // Prefetch metrics map once
-  React.useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const resp = await fetch(
-          `${API}/api/settings/quality-params/metrics?includeInactive=1`,
-          { credentials: "include" }
-        );
-        if (!resp.ok) return;
-        const payload = await resp.json();
-        const map = normalizeMetricsMap(payload?.data || payload?.metrics || {});
-        if (alive) setMetricsByGrade(map);
-        
-      } catch (e) {
-        // non-fatal; fallback to row.quality
-        console.error("metrics fetch error", e);
-      }
-    })();
-    return () => { alive = false; };
-  }, []);
+  //const hasActiveFilter = (f) => !!(f && (f.bag_no || f.status || f.created_from || f.created_to));
+  const hasActiveFilter = (f) =>
+    !!(f && (f.bag_no || f.status || f.created_from || f.created_to || f.from || f.to));
 
   const fetchPage = async (panel, nextPage, { replace = false,filtersOverride } = {}) => {
     if (typeof panel.loadData !== "function") return;
@@ -237,9 +144,10 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
   async function handleClearFilter(panel) {
     const key = panel.key;
     setFilters((s) => ({ ...s, [key]: {} }));
-    //await fetchPage(panel, 1, { replace: true });
-    setPageState((s) => ({ ...s, [key]: { page: 0, pageSize: PAGE_SIZE, total: null, hasMore: true } }));
-    await fetchPage(panel, 1, { replace: true, filtersOverride: {} });
+    await fetchPage(panel, 1, { replace: true });
+    // ensure we don't read stale filters[key] while setState is async
+   setPageState((s) => ({ ...s, [key]: { page: 0, pageSize: PAGE_SIZE, total: null, hasMore: true } }));
+   await fetchPage(panel, 1, { replace: true, filtersOverride: {} });
   }
 
    async function handleDownload(panel) {
@@ -308,7 +216,8 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
 
     const meta = pageState[key] || { page: 0, pageSize: PAGE_SIZE, total: null, hasMore: rows.length >= PAGE_SIZE };
     const panel = panels.find((p) => p.key === key);
-
+    const baseCols = cols.filter((c) => c !== "quality" && c !== "remarks");
+    const headerCols = [...baseCols];
     if (cols.length === 0 && rows.length === 0) {
       return (
         <Typography style={{ padding: 12, color: "rgba(0,0,0,0.6)", fontSize: 13 }}>
@@ -317,9 +226,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
       );
     }
 
-    // Move 'quality' to the last-but-one column and ensure a trailing 'remarks' column
-    const baseCols = cols.filter((c) => c !== "quality" && c !== "remarks");
-    const headerCols = [...baseCols, "quality", "remarks"];
 
     function toKeyValueString(val) {
       if (typeof val === "string") {
@@ -354,22 +260,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
 
     const f = filters[key] || {};
     const filterOn = hasActiveFilter(f);
-    const STATUS_OPTIONS = [
-        "Screening",
-        "Screening_Loaded",
-        "Blending",
-        "Blending_Loaded",
-        "De-Dusting",
-        "De-Dusting_Loaded",
-        "De-Magnetize",
-        "De-Magnetize_Loaded",
-        "Crushing",
-        "Crushing_Loaded",
-        "InStock",
-        "Quality"
-      ];
-
-   
     return (
       <div>
         {/* toolbar: filter chip + buttons */}
@@ -404,7 +294,7 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
               <TableRow>
                 {headerCols.map((c) => (
                   <TableCell key={c} style={{ fontWeight: 600, paddingTop: 6, paddingBottom: 6, fontSize: 13 }}>
-                    {c === "quality" ? "Quality" : (c === "remarks" ? "Remarks" : c)}
+                    {c}
                   </TableCell>
                 ))}
               </TableRow>
@@ -418,8 +308,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                 </TableRow>
               ) : (
                 rows.map((row, idx) => {
-                  const qKeys = getRowQualityKeys(row, metricsByGrade);
-                  const remarks = getRowRemarks(row);
                   return (
                     <TableRow key={idx}>
                       {baseCols.map((c) => (
@@ -427,39 +315,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                           {toKeyValueString(row?.[c])}
                         </TableCell>
                       ))}
-
-                      {/* Quality (last-but-one): mini table inside the cell */}
-                      <TableCell key="quality" style={{ paddingTop: 6, paddingBottom: 6, fontSize: 13 }}>
-                        {qKeys.length === 0 ? (
-                          ""
-                        ) : (
-                          <div style={{ overflowX: "auto" }}>
-                            <table style={{ borderCollapse: "collapse", minWidth: 320 }}>
-                              <thead>
-                                <tr>
-                                  {qKeys.map((k) => (
-                                    <th key={`qth-${idx}-${k}`} style={miniThStyle}>{k}</th>
-                                  ))}
-                                </tr>
-                              </thead>
-                              <tbody>
-                                <tr>
-                                  {qKeys.map((k) => (
-                                    <td key={`qtd-${idx}-${k}`} style={miniTdStyle}>
-                                      {fmtQualityVal(getQualityVal(row?.quality, k))}
-                                    </td>
-                                  ))}
-                                </tr>
-                              </tbody>
-                            </table>
-                          </div>
-                        )}
-                      </TableCell>
-
-                      {/* Remarks (last) */}
-                      <TableCell key="remarks" style={{ paddingTop: 6, paddingBottom: 6, fontSize: 13 }}>
-                        {toKeyValueString(remarks)}
-                      </TableCell>
                     </TableRow>
                   );
                 })
@@ -497,21 +352,8 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                 value={filterDialog.draft.bag_no}
                 onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, bag_no: e.target.value } }))}
               />
-              <FormControl size="small">
-                <InputLabel>Status</InputLabel>
-                <Select
-                  label="Status"
-                  value={filterDialog.draft.status || ""}
-                  onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, status: e.target.value } }))}
-                >
-                  <MenuItem value="">{/* empty = any */}</MenuItem>
-                  {STATUS_OPTIONS.map((st) => (
-                    <MenuItem key={st} value={st}>{st}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
               <TextField
-                label="Created From"
+                label="Loaded From"
                 type="date"
                 size="small"
                 InputLabelProps={{ shrink: true }}
@@ -519,7 +361,7 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                 onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, created_from: e.target.value } }))}
               />
               <TextField
-                label="Created To"
+                label="Loaded To"
                 type="date"
                 size="small"
                 InputLabelProps={{ shrink: true }}

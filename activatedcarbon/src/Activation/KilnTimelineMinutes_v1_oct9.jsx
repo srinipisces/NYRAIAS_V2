@@ -1,22 +1,13 @@
 import * as React from "react";
-import {
-  Box,
-  Paper,
-  Typography,
-  Dialog,
-  DialogTitle,
-  DialogContent,
-  DialogActions,
-  TextField,
-  Button,
+import {Box,Paper,Typography,Dialog,DialogTitle,DialogContent,
+  DialogActions,TextField,Button,
 } from "@mui/material";
-import axios from "axios";
 import LoadBagsMenu from "./LoadBagsMenu";
 import MovingBag from "./MovingBag";
-
+import axios from "axios";
 const api = axios.create({
-  baseURL: import.meta.env.VITE_API_URL,
-  withCredentials: true,
+  baseURL: import.meta.env.VITE_API_URL, // e.g., https://nyraias.com
+  withCredentials: true,                 // <-- sends auth cookies
   timeout: 15000,
 });
 
@@ -25,11 +16,24 @@ export default function KilnTimeline({
   pxPerMin = 20,
   innerHeight = 160,
   gridY = 12,
-  kiln = "Kiln A",
+  kiln={kiln} 
 }) {
-  const API_URL = import.meta.env.VITE_API_URL;
 
-  // ---------- layout ----------
+const API_URL = import.meta.env.VITE_API_URL;
+
+
+  // --- state ---
+ /*  const [inwards, setInwards] = React.useState(() => {
+    // use your real data here; fallback dummy:
+    const list = [];
+    for (let i = 1001; i <= 1006; i++) {
+      const inward = `I-${i}`;
+      const bags = Array.from({ length: 6 }, (_, k) => `${inward}_Out_${k + 1}`);
+      list.push({ inward, bags });
+    }
+    return list;
+  }); */
+
   const m = { top: 8, right: 16, bottom: 8, left: 16 };
   const contentW = minutes * pxPerMin;
   const svgW = contentW + m.left + m.right;
@@ -43,70 +47,24 @@ export default function KilnTimeline({
   const hourXs = Array.from({ length: Math.floor(minutes / 60) + 1 }, (_, i) => m.left + i * 60 * pxPerMin);
   const rowCount = Math.floor(innerHeight / gridY);
   const rowYs = Array.from({ length: rowCount + 1 }, (_, i) => yTop + i * gridY);
-
-  // ---------- state ----------
   const [todayTotals, setTodayTotals] = React.useState({ bagCount: 0, totalWeightKg: 0 });
-  const [activeLoads, setActiveLoads] = React.useState([]); // items to render
-  const [pendingBag, setPendingBag] = React.useState(null); // { bag, inward }
+
+  // ...
+  const [activeLoads, setActiveLoads] = React.useState([]);
+  // { id, bag, inward, startMs }
+  const [pendingBag, setPendingBag] = React.useState(null); // {bag, inward}
   const [weightDlgOpen, setWeightDlgOpen] = React.useState(false);
   const [weightInput, setWeightInput] = React.useState("");
   const [nowMs, setNowMs] = React.useState(() => Date.now());
-  const [saving, setSaving] = React.useState(false);
-
   React.useEffect(() => {
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
 
-  // ---------- lane assignment (number-based, modulo 6) ----------
-  // Parse bag as "<Inward>_Out_<n>" and map n % 6 → lane:
-  // 1→top1, 3→top2, 5→top3, 2→bot1, 4→bot2, 0→bot3
-  const assignLanes = React.useCallback((items) => {
-    const parseOutNumber = (bag = "") => {
-     // Match either "-Out-<n>" or "_Out_<n>" (case-insensitive)
-     // Also tolerates any trailing chars after the number.
-     const m = /(?:^|[_-])Out(?:[_-])(\d+)/i.exec(bag);
-     if (!m) return null;
-     const n = parseInt(m[1], 10);
-     return Number.isFinite(n) ? n : null;
-   };
 
-    const laneFromN = (n) => {
-      if (!Number.isFinite(n)) return "top1"; // safe fallback
-      const r = n % 6; // 0..5
-      switch (r) {
-        case 1: return "top1"; // 1,7,13,...
-        case 3: return "top2"; // 3,9,15,...
-        case 5: return "top3"; // 5,11,17,...
-        case 2: return "bot1"; // 2,8,14,...
-        case 4: return "bot2"; // 4,10,16,...
-        case 0: return "bot3"; // 6,12,18,...
-        default: return "top1";
-      }
-    };
-
-    return items.map((it) => {
-      const n = parseOutNumber(it.bag ?? "");
-      const lane = laneFromN(n);
-      return {
-        ...it,
-        options: {
-          ...(it.options || {}),
-          lane,
-          chipSide: "right",
-        },
-      };
-    });
-  }, []);
-
-  const applyAndSetActive = React.useCallback(
-    (rawItems) => setActiveLoads(assignLanes(rawItems)),
-    [assignLanes]
-  );
-
-  // ---------- initial fetch (GET /kiln/loads) ----------
   React.useEffect(() => {
     const ac = new AbortController();
+
     (async () => {
       try {
         const url = `${API_URL}/api/activation/kiln/loads?kiln=${encodeURIComponent(kiln)}`;
@@ -117,6 +75,7 @@ export default function KilnTimeline({
         if (!payload?.success) throw new Error("Failed to load data");
 
         const { loads = [], today = { bagCount: 0, totalWeightKg: 0 } } = payload;
+
         const now = Date.now();
         const mapped = loads.map((d, i) => ({
           id: `${d.bag_no}-${i}`,
@@ -125,25 +84,51 @@ export default function KilnTimeline({
           startMs: now - (Number(d.hoursAgo) || 0) * 3600 * 1000,
         }));
 
-        applyAndSetActive(mapped);
+        setActiveLoads(mapped);
         setTodayTotals({
           bagCount: Number(today.bagCount || 0),
           totalWeightKg: Number(today.totalWeightKg || 0),
         });
         setNowMs(now);
       } catch (err) {
-        if (err.name !== "AbortError") alert(`Failed to load ${kiln} history: ${err.message || err}`);
+        if (err.name !== "AbortError") {
+          alert(`Failed to load ${kiln} history: ${err.message || err}`);
+        }
       }
     })();
-    return () => ac.abort();
-  }, [kiln, API_URL, applyAndSetActive]);
 
-  // ---------- user flows ----------
+    return () => ac.abort();
+  }, [kiln, API_URL]);
+
+  /* const handleLoadSelected = (bag, inward) => {
+    setActiveLoads((prev) => [
+      ...prev,
+      { id: `${bag}-${Date.now()}`, bag, inward, startMs: Date.now() },
+    ]);
+  }; */
+ 
+  // Kiln lanes: one above, one below the red timeline
+  const chipX = m.left; // left column for chips
+  const chipTopY = yTimeline - 48;   // ~48px above timeline
+  const chipBottomY = yTimeline + 24; // ~24px below timeline
+
+  // compute layout once (after you compute contentW etc.)
+  const layout = React.useMemo(() => ({
+    m,
+    yTimeline,
+    pxPerMin,
+    minutes,
+    innerWidth: contentW, // available width for drawing (no margins)
+  }), [m, yTimeline, pxPerMin, minutes, contentW]);
+
+  // fired when user clicks "<" in the menu
   const handleLoadSelected = (bag, inward) => {
     setPendingBag({ bag, inward });
     setWeightInput("");
     setWeightDlgOpen(true);
   };
+
+  const [saving, setSaving] = React.useState(false); // near your other state
 
   const handleConfirmWeight = async () => {
     const w = parseFloat(weightInput);
@@ -151,20 +136,25 @@ export default function KilnTimeline({
       alert("Please enter a valid weight (e.g., 12.5)");
       return;
     }
-    const { bag, inward } = pendingBag;
+    const { bag, inward } = pendingBag;  // set by onLoad from the menu/scanner
 
     try {
       setSaving(true);
+
+      // NOTE: if your api.baseURL does NOT include "/api", call "/api/activation/kilnfeed" here.
       const { data } = await api.post("/api/activation/kilnfeed", {
         inward_number: inward,
         bag_no: bag,
-        bags_loaded_for: kiln,
-        kiln_loaded_bag_weight: w,
+        bags_loaded_for: kiln,                // kiln string, e.g. "Kiln A"
+        kiln_loaded_bag_weight: w,            // number from the dialog
       });
 
-      const ok = data && (data.operation === "success" || data.success === true);
-      if (!ok) throw new Error("Backend reported failure");
+      const ok = data && (data.operation === 'success' || data.success === true);
+      if (!ok) {
+        throw new Error('Backend reported failure');
+      }
 
+      // success path: update UI
       const now = Date.now();
       const mapped = (data.loads || []).map((d, i) => ({
         id: `${d.bag_no}-${i}`,
@@ -172,16 +162,26 @@ export default function KilnTimeline({
         weight: d.kiln_loaded_weight ?? null,
         startMs: now - (Number(d.hoursAgo) || 0) * 3600 * 1000,
       }));
-      applyAndSetActive(mapped);
+      setActiveLoads(mapped);
       setTodayTotals({
         bagCount: Number(data.today?.bagCount || 0),
         totalWeightKg: Number(data.today?.totalWeightKg || 0),
       });
 
-      setPendingBag(null);
+
+      // On success: add to the timeline (same as you already do)
+      setActiveLoads(prev => ([
+        ...prev,
+        { id: `${bag}-${Date.now()}`, bag, inward, weight: w, startMs: Date.now() },
+      ]));
+
+      // Close dialog
+      setPendingBag(null);     // if your Dialog uses open={!!pendingBag}
       setWeightDlgOpen(false);
+
     } catch (err) {
-      alert(err?.message || "Error while loading. Please try again.");
+      alert("Error while loading. Please try again."); // per your requirement
+      // (optional) console.error(err);
     } finally {
       setSaving(false);
     }
@@ -192,39 +192,37 @@ export default function KilnTimeline({
     setWeightDlgOpen(false);
   };
 
-  // share layout with MovingBag
-  const layout = React.useMemo(
-    () => ({
-      m,
-      yTimeline,
-      pxPerMin,
-      minutes,
-      innerWidth: contentW,
-    }),
-    [m, yTimeline, pxPerMin, minutes, contentW]
-  );
+
+
 
   return (
     <Box sx={{ width: "100%", display: "flex", justifyContent: "center", overflow: "hidden" }}>
       <Paper
         variant="outlined"
         sx={{
-          width: { xs: "100%", sm: 800 },
+          width: { xs: "100%", sm: 800 }, // 100% on mobile, 800px on larger screens
           maxWidth: "100%",
           display: "flex",
           flexDirection: "column",
-          overflow: "hidden",
+          overflow: "hidden",             // prevent page scrollbar
           bgcolor: "transparent",
         }}
       >
+        {/* Header stays fixed */}
         {/* Header row 1: title */}
-        <Box sx={{ p: 1, borderBottom: "1px solid #e0e6eb", bgcolor: "white" }}>
+        <Box
+          sx={{
+            p: 1,
+            borderBottom: "1px solid #e0e6eb",
+            bgcolor: "white",
+          }}
+        >
           <Typography variant="subtitle2" fontWeight={700}>
             {kiln} - Loader
           </Typography>
         </Box>
 
-        {/* Header row 2: day chip + menu */}
+        {/* Header row 2: day chip + menu in the same line */}
         <Box
           sx={{
             px: 1,
@@ -237,6 +235,7 @@ export default function KilnTimeline({
             gap: 1,
           }}
         >
+          {/* compact chip text: "<bags> - <weight> kg" */}
           <Typography
             variant="caption"
             sx={{
@@ -255,13 +254,14 @@ export default function KilnTimeline({
           <LoadBagsMenu onLoad={handleLoadSelected} />
         </Box>
 
-        {/* Scrollable canvas */}
+        {/* Scrollable content area only */}
         <Box
           sx={{
             flex: 1,
-            minHeight: 0,
-            height: 320,
-            overflow: "auto",
+            minHeight: 0,            // allow child to scroll inside a flex column
+            height: 320,             // viewport height for the timeline area
+            overflow: "auto",        // the ONLY place that scrolls
+            // prevent wide SVG from forcing outer width
             "& > .canvas": { width: svgW, height: svgH, display: "inline-block" },
           }}
         >
@@ -298,9 +298,16 @@ export default function KilnTimeline({
               <rect x={m.left} y={yTop} width={contentW} height={innerHeight} fill="none" stroke="#c5d0db" />
 
               {/* red timeline */}
-              <line x1={m.left} y1={yTimeline} x2={m.left + contentW} y2={yTimeline} stroke="red" strokeWidth={2} />
+              <line
+                x1={m.left}
+                y1={yTimeline}
+                x2={m.left + contentW}
+                y2={yTimeline}
+                stroke="red"
+                strokeWidth={2}
+              />
 
-              {/* minute ticks */}
+              {/* minute ticks on the red timeline */}
               <g stroke="red" strokeOpacity={0.7}>
                 {minuteXs.map((x, idx) => (
                   <line key={`tick-${idx}`} x1={x} y1={yTimeline - 4} x2={x} y2={yTimeline + 4} />
@@ -309,28 +316,27 @@ export default function KilnTimeline({
 
               {/* active loads */}
               <g>
-                {activeLoads.map((load) => (
+                {activeLoads.map((load, idx) => (
                   <MovingBag
                     key={load.id}
                     bag={load.bag}
                     startMs={load.startMs}
-                    index={0}               // not used for lanes; kept for compatibility
+                    index={idx}
                     layout={layout}
                     nowMs={nowMs}
-                    options={load.options}  // { lane: "top1|top2|top3|bot1|bot2|bot3", chipSide: "left|right" }
+                    // options={{ chipSide: 'auto' }} // optional
                   />
                 ))}
               </g>
+
             </svg>
           </div>
         </Box>
-
-        {/* weight dialog */}
         <Dialog open={weightDlgOpen} onClose={handleCancelWeight} maxWidth="xs" fullWidth>
           <DialogTitle>Enter Weight</DialogTitle>
           <DialogContent>
             <Typography variant="body2" sx={{ mb: 1, color: "text.secondary" }}>
-              {pendingBag ? pendingBag.bag : ""}
+              {pendingBag ? `${pendingBag.bag}` : ""}
             </Typography>
             <TextField
               autoFocus
@@ -343,13 +349,19 @@ export default function KilnTimeline({
             />
           </DialogContent>
           <DialogActions>
+            {/* <Button onClick={handleCancelWeight}>Cancel</Button>
+            <Button variant="contained" onClick={handleConfirmWeight}>Add</Button> */}
             <Button onClick={handleCancelWeight} disabled={saving}>Cancel</Button>
             <Button variant="contained" onClick={handleConfirmWeight} disabled={saving}>
               {saving ? "Saving…" : "Add"}
             </Button>
+
           </DialogActions>
         </Dialog>
+
       </Paper>
     </Box>
+
+    
   );
 }

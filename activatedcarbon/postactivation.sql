@@ -410,6 +410,7 @@ create table testbed_postactivation
   audit_trail jsonb
 );
 
+-- Generate bag_no for <account>_postactivation with continuous per-operation counter
 CREATE OR REPLACE FUNCTION trg_set_bag_no_postactivation()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -423,11 +424,10 @@ DECLARE
   op_norm        TEXT; -- canonical: lowercased, spaces/hyphens -> underscores
   code           TEXT; -- SCR|CRU|DDU|DMZ|BLD
   g              TEXT;
-  patt           TEXT;
   last_bag       TEXT;
   lock_key       TEXT;
 BEGIN
-  -- Enforce: caller must NOT supply bag_no
+  -- Caller must NOT supply bag_no
   IF NEW.bag_no IS NOT NULL THEN
     RAISE EXCEPTION 'bag_no must not be provided by caller (it is auto-generated)';
   END IF;
@@ -435,10 +435,9 @@ BEGIN
   -- Normalize inputs
   g := TRIM(COALESCE(NEW.grade, ''));
   op_raw := TRIM(COALESCE(NEW.operations, ''));
-  -- canonical operations: lowercase + spaces/hyphens -> underscores
   op_norm := REGEXP_REPLACE(LOWER(op_raw), '[-\s]+', '_', 'g');
 
-  -- Map operations -> code using canonical form
+  -- Allowed operations only (locked)
   code := CASE op_norm
             WHEN 'screening'      THEN 'SCR'
             WHEN 'crushing'       THEN 'CRU'
@@ -447,9 +446,10 @@ BEGIN
             WHEN 'blending'       THEN 'BLD'
             ELSE NULL
           END;
-
   IF code IS NULL THEN
-    RAISE EXCEPTION 'Unsupported operations value: "%". Expected one of Screening, Crushing, De-Dusting, De-Magnetize, Blending.', NEW.operations;
+    RAISE EXCEPTION
+      'Unsupported operations value: "%". Allowed: Screening, Crushing, De-Dusting, De-Magnetize, Blending.',
+      NEW.operations;
   END IF;
 
   date_str := TO_CHAR(NOW(), 'DDMMYY');
@@ -457,7 +457,7 @@ BEGIN
   -- <account>_postactivation -> <account>_settings
   settings_tbl := REGEXP_REPLACE(TG_TABLE_NAME, '_postactivation$', '_settings');
 
-  -- Try to fetch alias from <account>_settings.settings->'Output_Grades'->grade->>'alias'
+  -- Try to fetch alias from <account>_settings.settings->''Output_Grades''->grade->>''alias''
   BEGIN
     EXECUTE format(
       $sql$
@@ -466,8 +466,8 @@ BEGIN
                  THEN NULLIF(settings->'Output_Grades'->%L->>'alias','')
                ELSE NULL
              END
-        FROM %I
-       LIMIT 1
+      FROM %I
+      LIMIT 1
       $sql$,
       g, g, settings_tbl
     )
@@ -490,24 +490,20 @@ BEGIN
     NEW.bag_no := code || '_' || date_str || '_';
   END IF;
 
-  -- Pattern for THIS code/alias/date (guards suffix extraction)
-  patt := '^' || code || '(_[A-Za-z0-9]+)?_' || date_str || '_[0-9]{3}$';
-
-  -- Concurrency guard: per (table,code,alias,date)
-  lock_key := TG_TABLE_NAME || '|' || code || '|' || COALESCE(alias_code,'') || '|' || date_str;
+  -- Concurrency guard: per (table, operation code) since counter is per-op globally
+  lock_key := TG_TABLE_NAME || '|' || code;
   PERFORM pg_advisory_xact_lock(hashtext(lock_key));
 
-  -- Find the LAST generated bag for the same operations (canonical), same date/code[/alias]
+  -- Find the LAST generated bag for the same operation (no per-day/alias series)
   EXECUTE format(
     $sql$
     SELECT bag_no
       FROM %I
      WHERE REGEXP_REPLACE(LOWER(operations), '[-\s]+', '_', 'g') = %L
-       AND bag_no ~ %L
      ORDER BY bag_no_created_dttm DESC NULLS LAST, bag_no DESC
      LIMIT 1
     $sql$,
-    TG_TABLE_NAME, op_norm, patt
+    TG_TABLE_NAME, op_norm
   )
   INTO last_bag;
 
@@ -520,12 +516,13 @@ BEGIN
     END IF;
   END IF;
 
-  -- Increment with rollover after 999 → 001
+  -- Increment (rollover after 999 -> 001; keep if that's your rule)
   IF last_suffix >= 999 THEN
     last_suffix := 0;
   END IF;
 
-  NEW.bag_no := NEW.bag_no || LPAD((last_suffix + 1)::TEXT, '0', 3);
+  -- LPAD args: (text, length, fill)
+  NEW.bag_no := NEW.bag_no || LPAD((last_suffix + 1)::TEXT, 3, '0');
 
   -- Ensure created timestamp if caller didn't pass one
   IF NEW.bag_no_created_dttm IS NULL THEN
@@ -536,12 +533,14 @@ BEGIN
 END;
 $$;
 
--- Trigger
+-- Trigger (unchanged)
 DROP TRIGGER IF EXISTS set_bag_no_on_postactivation ON testbed_postactivation;
 CREATE TRIGGER set_bag_no_on_postactivation
 BEFORE INSERT ON testbed_postactivation
 FOR EACH ROW
 EXECUTE FUNCTION trg_set_bag_no_postactivation();
+
+
 
 -- Optional index to accelerate the WHERE and ORDER BY
 CREATE INDEX IF NOT EXISTS ix_postact_ops_time
@@ -549,4 +548,71 @@ ON testbed_postactivation (
   (regexp_replace(lower(operations), '[-\s]+', '_', 'g')),
   bag_no_created_dttm DESC
 );
+
+ALTER TABLE testbed_postactivation
+  ADD COLUMN is_loaded boolean
+  GENERATED ALWAYS AS (
+    LOWER(RIGHT(RTRIM(COALESCE(stock_status,'')), 7)) = '_loaded'
+  ) STORED;
+
+ALTER TABLE testbed_destoning
+  ADD COLUMN is_loaded boolean
+  GENERATED ALWAYS AS (
+    LOWER(RIGHT(RTRIM(COALESCE(final_destination,'')), 6)) = 'loaded'
+  ) STORED;
+
+CREATE INDEX IF NOT EXISTS ix_testbed_postact_not_loaded_date
+  ON testbed_postactivation (bag_no_created_dttm DESC)
+  WHERE is_loaded = false;
+
+CREATE INDEX IF NOT EXISTS ix_testbed_destoning_not_loaded_date
+  ON testbed_destoning (bag_generated_timestamp DESC)
+  WHERE is_loaded = false;
+
+
+CREATE OR REPLACE VIEW testbed_postactivation_loading_ready AS
+SELECT
+  ds_bag_no::text                    AS bag_no,
+  weight_out::numeric                AS weight,
+  'exkiln'::text                     AS grade,
+  final_destination::text            AS status,
+  bag_generated_timestamp::timestamp AS create_date_time
+FROM testbed_destoning
+WHERE is_loaded = false
+
+UNION ALL
+
+SELECT
+  bag_no::text                   AS bag_no,
+  bag_weight::numeric            AS weight,
+  grade::text                    AS grade,
+  stock_status::text             AS status,
+  bag_no_created_dttm::timestamp AS create_date_time
+FROM testbed_postactivation
+WHERE is_loaded = false;
+
+CREATE OR REPLACE VIEW testbed_postactivation_loaded AS
+SELECT
+  ds_bag_no::text                    AS bag_no,
+  'exkiln'::text                     AS grade,
+  weight_out::numeric                AS weight,
+  screening_bag_weight::numeric      AS reload_weight,
+  screening_inward_time::timestamp   AS reload_time,
+  final_destination::text            AS status
+FROM testbed_destoning
+WHERE is_loaded = true
+
+UNION ALL
+
+SELECT
+  bag_no::text                       AS bag_no,
+  grade::text                        AS grade,
+  bag_weight::numeric                AS weight,
+  reload_weight::numeric             AS reload_weight,
+  reload_time::timestamp             AS reload_time,
+  stock_status::text                 AS status
+FROM testbed_postactivation
+WHERE is_loaded = true;
+
+
 

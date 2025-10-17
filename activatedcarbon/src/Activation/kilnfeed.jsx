@@ -26,7 +26,7 @@ export default function KilnArea() {
 
 
   return (
-    <Paper variant="outlined" sx={{ p: 1, mt: 2 }}>
+    <Paper variant="outlined" sx={{ p: 1, mt: 2,width: { xs: '100%', md: 1000 } }}>
       {/* Header row: title + kiln selector */}
       <Stack
         direction="row"

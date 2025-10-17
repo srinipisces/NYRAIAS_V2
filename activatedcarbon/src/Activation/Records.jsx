@@ -662,7 +662,15 @@ export default function KilnFeedAndOutputAccordion() {
   return (
     <Box sx={{ width: { xs: '100%', sm: 900 }, maxWidth: 1100, mx: 'auto', p: { xs: 1, md: 2 } }}>
       {/* Kiln Feed */}
-      <Accordion expanded={expanded === 'feed'} onChange={handleChange('feed')}>
+      <Accordion expanded={expanded === 'feed'} onChange={handleChange('feed')} 
+      style={{
+                borderRadius: 1,
+                overflow: "hidden",
+                backgroundColor: "#f5f5f7", // light grey card
+                boxShadow: "0px 2px 10px rgba(0,0,0,0.08)",
+                border: "1px solid #e6e6ea",
+              }}
+      >
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Typography variant="subtitle1" fontWeight={700}>Kiln Feed</Typography>
         </AccordionSummary>
@@ -683,7 +691,16 @@ export default function KilnFeedAndOutputAccordion() {
       </Accordion>
 
       {/* Kiln Output */}
-      <Accordion expanded={expanded === 'output'} onChange={handleChange('output')}>
+      <Accordion expanded={expanded === 'output'} onChange={handleChange('output')}
+       style={{
+                borderRadius: 1,
+                overflow: "hidden",
+                backgroundColor: "#f5f5f7", // light grey card
+                boxShadow: "0px 2px 10px rgba(0,0,0,0.08)",
+                border: "1px solid #e6e6ea",
+                marginTop : 10
+              }}
+      >
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Typography variant="subtitle1" fontWeight={700}>Kiln Output</Typography>
         </AccordionSummary>
@@ -703,7 +720,16 @@ export default function KilnFeedAndOutputAccordion() {
         </AccordionDetails>
       </Accordion>
       {/* DeStoning */}
-      <Accordion expanded={expanded === 'destoning'} onChange={handleChange('destoning')}>
+      <Accordion expanded={expanded === 'destoning'} onChange={handleChange('destoning')}
+       style={{
+                borderRadius: 1,
+                overflow: "hidden",
+                backgroundColor: "#f5f5f7", // light grey card
+                boxShadow: "0px 2px 10px rgba(0,0,0,0.08)",
+                border: "1px solid #e6e6ea",
+                marginTop : 10
+              }}
+      >
         <AccordionSummary expandIcon={<ExpandMoreIcon />}>
           <Typography variant="subtitle1" fontWeight={700}>De-Stoning</Typography>
         </AccordionSummary>

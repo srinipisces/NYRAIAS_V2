@@ -14,15 +14,16 @@ const lazyWithTabName = (importer, tabName) =>
   );
 
 // Quality stays standalone (no props injected)
-const LabTab = React.lazy(() => import('./Quality'));
+const LabTab = React.lazy(() => import('./Qualityv2'));
 
 // Load_Unload with just tabName baked in
 const ScreeningTab     = lazyWithTabName(() => import('./Screening'), 'Screening');
-const CrushingTab      = lazyWithTabName(() => import('./Load_Unload'), 'Crushing');
+const CrushingTab      = lazyWithTabName(() => import('./Screening'), 'Crushing');
 const DeDustingTab     = lazyWithTabName(() => import('./Load_Unload'), 'De-Dusting');
 const DeMagnatizingTab = lazyWithTabName(() => import('./Load_Unload'), 'De-Magnetize');
 const BlendingTab      = lazyWithTabName(() => import('./Load_Unload'), 'Blending');
 const StockTab     = lazyWithTabName(() => import('./ProcessRecords'), 'ProcessRecords');
+const ReportTab     = lazyWithTabName(() => import('./ReportsHub'), 'Reports');
 
 // Optional: your tab registry
 const TAB_ITEMS = [
@@ -32,7 +33,8 @@ const TAB_ITEMS = [
   { label: 'De-Dusting',   key: 'dedusting',   Component: DeDustingTab },
   { label: 'De-Magnetize', key: 'demagnetize', Component: DeMagnatizingTab },
   { label: 'Blending',     key: 'blending',    Component: BlendingTab },
-  { label: 'ProcessRecords',    key: 'processrecords',   Component: StockTab },
+  { label: 'Records',    key: 'records',   Component: StockTab },
+  { label: 'Reports',    key: 'reports',   Component: ReportTab },
 ];
 
 const a11yProps = (i) => ({ id: `postact-tab-${i}`, 'aria-controls': `postact-tabpanel-${i}` });

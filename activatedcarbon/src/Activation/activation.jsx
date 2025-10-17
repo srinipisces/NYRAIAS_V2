@@ -24,9 +24,11 @@ const lazyWithTabName = (importer, tabName) =>
 //["Kiln Feed","","Boiler Performance","Kiln Temperature","Kiln Output","De-Stoning","Edit"]
 const kilnfeed = lazyWithTabName(() => import("./kilnfeed"), "kiln_feed");
 const KilnTemp = lazyWithTabName(() => import("./KilnTempTab"), "kiln_temp");
-const KilnFeedQuality = lazyWithTabName(() => import("./KlinFeedQualityTab"), "kiln_quality");
-const DeStoningQuality = lazyWithTabName(() => import("./DeStoningQuality.jsx"), "kiln_quality");
+const KilnFeedQuality = lazyWithTabName(() => import("./KilnFeedQuality"), "kiln_feed_quality");
+const KilnOutputQuality = lazyWithTabName(() => import("./KilnOutputQuality.jsx"), "kiln_output_quality");
+const DeStoningQuality = lazyWithTabName(() => import("./DeStoningQuality.jsx"), "destoning_quality");
 const DeStoning = lazyWithTabName(() => import("./DeStoningTab"), "De-Stoning");
+const Reports = lazyWithTabName(() => import("./Activation_ReportsHub","reports"))
 
 const RecordsTab = lazyWithTabName(
   () => import("./Records"),
@@ -35,12 +37,14 @@ const RecordsTab = lazyWithTabName(
 
 // ------- registry of all possible tabs -------
 const TAB_ITEMS = [
+  { label: "Kiln Feed Quality", key: "kiln_feed_quality", Component: KilnFeedQuality },
   { label: "Kiln Feed", key: "kiln_feed", Component: kilnfeed },
-  { label: "Kiln Feed Quality", key: "kiln_quality", Component: KilnFeedQuality },
+  { label: "Kiln Output Quality", key: "kiln_output_quality", Component: KilnOutputQuality },
   { label: "Kiln Temperature", key: "raw-kiln_temp", Component: KilnTemp },
   { label: "De-Stoning", key: "de-stoning", Component: DeStoning },
   { label: "De-Stoning Quality", key: "kiln_output_quality", Component: DeStoningQuality },
   { label: "Records", key: "records", Component: RecordsTab },
+  { label: "Reports", key: "records", Component: Reports },
 ];
 
 // ------- helper: access check (Operations.Receivables.<Label>) -------

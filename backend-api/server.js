@@ -59,9 +59,11 @@ pool.connect()
     app.use('/api/settings', require('./settings'));
     app.use('/api/destoning', require('./destoning'));
     app.use('/api/post_activation', require('./post_activation'));
-    app.use('/api/labels' ,require('./labels'))
-    app.use('/api/receivables' ,require('./receivables.js'))
-    app.use('/api/activation' ,require('./activation.js'))
+    app.use('/api/labels' ,require('./labels'));
+    app.use('/api/receivables' ,require('./receivables.js'));
+    app.use('/api/activation' ,require('./activation.js'));
+    app.use('/api/reports_postactivation' ,require('./reports_postactivation.js'));
+    app.use('/api/reports_activation' ,require('./reports_activation.js'));
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {

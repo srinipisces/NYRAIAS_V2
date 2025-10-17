@@ -58,36 +58,70 @@ export default function KilnTimeline({
     return () => clearInterval(t);
   }, []);
 
-  // ---------- lane assignment (number-based, modulo 6) ----------
-  // Parse bag as "<Inward>_Out_<n>" and map n % 6 → lane:
-  // 1→top1, 3→top2, 5→top3, 2→bot1, 4→bot2, 0→bot3
-  const assignLanes = React.useCallback((items) => {
-    const parseOutNumber = (bag = "") => {
-     // Match either "-Out-<n>" or "_Out_<n>" (case-insensitive)
-     // Also tolerates any trailing chars after the number.
-     const m = /(?:^|[_-])Out(?:[_-])(\d+)/i.exec(bag);
-     if (!m) return null;
-     const n = parseInt(m[1], 10);
-     return Number.isFinite(n) ? n : null;
-   };
+  // ---------- lane assignment ----------
+  // lanes: left (inline), top1/bot1/top2/bot2 around the red line
+  // Four fixed lanes (no inline lane at the red line)
+   /*  const PATTERN = ["top1", "bot1", "top2", "bot2"]; // repeat
 
-    const laneFromN = (n) => {
-      if (!Number.isFinite(n)) return "top1"; // safe fallback
-      const r = n % 6; // 0..5
-      switch (r) {
-        case 1: return "top1"; // 1,7,13,...
-        case 3: return "top2"; // 3,9,15,...
-        case 5: return "top3"; // 5,11,17,...
-        case 2: return "bot1"; // 2,8,14,...
-        case 4: return "bot2"; // 4,10,16,...
-        case 0: return "bot3"; // 6,12,18,...
-        default: return "top1";
+    const minuteKey = (ms) => Math.floor(ms / 60000);
+
+    const assignLanes = React.useCallback((items) => {
+    const clusters = new Map();
+    items.forEach((it, idx) => {
+        const key = minuteKey(it.startMs);
+        if (!clusters.has(key)) clusters.set(key, []);
+        clusters.get(key).push(idx);
+    });
+
+    const next = items.map((it) => ({ ...it }));
+    for (const [, idxList] of clusters) {
+        idxList.forEach((idx, j) => {
+        const lane = PATTERN[j % PATTERN.length];     // top1 → bot1 → top2 → bot2 → …
+        next[idx].options = {
+            ...(next[idx].options || {}),
+            lane,
+            chipSide: "right",                           // keep chips to the right of the dot
+        };
+        });
+    }
+    return next;
+    }, []); */
+
+  // ---------- lane assignment (rule-based) ----------
+  // Rules:
+  // - Odd last digit -> top*, Even -> bot*
+  // - _A_ -> lane1, _B_ -> lane2, _C_ -> lane3
+  // - Default letter lane = 1 if none found
+  const assignLanes = React.useCallback((items) => {
+    const getLastDigit = (s = "") => {
+      for (let i = s.length - 1; i >= 0; i--) {
+        const ch = s[i];
+        if (ch >= "0" && ch <= "9") return Number(ch);
       }
+      return null;
     };
 
-    return items.map((it) => {
-      const n = parseOutNumber(it.bag ?? "");
-      const lane = laneFromN(n);
+    const getLetterLane = (s = "") => {
+      if (s.includes("_A_")) return 1;
+      if (s.includes("_B_")) return 2;
+      if (s.includes("_C_")) return 3;
+      return 1; // fallback lane if no marker provided
+    };
+
+    const next = items.map((it) => {
+      const bag = it.bag ?? "";
+      const lastDigit = getLastDigit(bag);
+      const letterLane = getLetterLane(bag); // 1..3
+
+      // Decide top/bot; if no digit, keep original item as-is
+      let lane;
+      if (lastDigit === null) {
+        lane = (it.options?.lane) || "top1"; // gentle fallback
+      } else {
+        const side = lastDigit % 2 === 1 ? "top" : "bot";
+        lane = `${side}${letterLane}`; // e.g., "top2", "bot3"
+      }
+
       return {
         ...it,
         options: {
@@ -97,7 +131,9 @@ export default function KilnTimeline({
         },
       };
     });
+    return next;
   }, []);
+
 
   const applyAndSetActive = React.useCallback(
     (rawItems) => setActiveLoads(assignLanes(rawItems)),
@@ -165,6 +201,7 @@ export default function KilnTimeline({
       const ok = data && (data.operation === "success" || data.success === true);
       if (!ok) throw new Error("Backend reported failure");
 
+      // use the response (same shape as GET /kiln/loads)
       const now = Date.now();
       const mapped = (data.loads || []).map((d, i) => ({
         id: `${d.bag_no}-${i}`,
@@ -317,7 +354,7 @@ export default function KilnTimeline({
                     index={0}               // not used for lanes; kept for compatibility
                     layout={layout}
                     nowMs={nowMs}
-                    options={load.options}  // { lane: "top1|top2|top3|bot1|bot2|bot3", chipSide: "left|right" }
+                    options={load.options}  // { lane: "left"|"top1"|"bot1"|"top2"|"bot2", chipSide: "left"|"right" }
                   />
                 ))}
               </g>

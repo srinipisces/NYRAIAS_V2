@@ -1,13 +1,9 @@
-// Stock.jsx — Filters + Download + Pagination + Per‑row Quality/Remarks
-// Plain JS (no sx), MUI v7 compatible
-
+// Stock.jsx — NO sx anywhere (MUI v7, plain JS)
 import * as React from "react";
 import {
   Accordion, AccordionSummary, AccordionDetails,
   Typography, Table, TableHead, TableRow, TableCell, TableBody,
-  TableContainer, CircularProgress, Alert, Button,
-  Chip, TextField, Select, MenuItem, FormControl, InputLabel,
-  Dialog, DialogTitle, DialogContent, DialogActions,
+  TableContainer, CircularProgress, Alert, Button
 } from "@mui/material";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import RemoveRoundedIcon from "@mui/icons-material/RemoveRounded";
@@ -106,29 +102,25 @@ function normalizeMetricsMap(raw) {
   return out;
 }
 
-const miniThStyle = { border: "1px solid rgba(0,0,0,0.2)", padding: "2px 6px", fontSize: 12, textAlign: "left", whiteSpace: "nowrap" };
-const miniTdStyle = { border: "1px solid rgba(0,0,0,0.12)", padding: "3px 6px", fontSize: 12, whiteSpace: "nowrap" };
+// ---------------------------------------------------
 
-export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, rowPx = 32 }) {
+export default function Stock({
+  panels = [],
+  barHeight = 52,
+  visibleRows = 10,
+  rowPx = 32,
+}) {
   const [expandedKey, setExpandedKey] = React.useState(null);
-  const [data, setData] = React.useState({}); // { [key]: { columns, rows } }
+  const [data, setData] = React.useState({});
   const [loading, setLoading] = React.useState({});
   const [pageState, setPageState] = React.useState({}); // { [key]: { page, pageSize, total, hasMore } }
   const [err, setErr] = React.useState({});
   const [metricsByGrade, setMetricsByGrade] = React.useState({});
-  const [downloading, setDownloading] = React.useState({});
-  const [filters, setFilters] = React.useState({}); // { [panelKey]: { bag_no, status, created_from, created_to } }
-  const [filterDialog, setFilterDialog] = React.useState({
-    open: false,
-    panelKey: null,
-    draft: { bag_no: "", status: "", created_from: "", created_to: "" },
-  });
 
   const PAGE_SIZE = 50;
+
   const headerPx = 38;
   const viewportPx = headerPx + visibleRows * rowPx;
-
-  const hasActiveFilter = (f) => !!(f && (f.bag_no || f.status || f.created_from || f.created_to));
 
   // Prefetch metrics map once
   React.useEffect(() => {
@@ -143,7 +135,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
         const payload = await resp.json();
         const map = normalizeMetricsMap(payload?.data || payload?.metrics || {});
         if (alive) setMetricsByGrade(map);
-        
       } catch (e) {
         // non-fatal; fallback to row.quality
         console.error("metrics fetch error", e);
@@ -152,18 +143,15 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
     return () => { alive = false; };
   }, []);
 
-  const fetchPage = async (panel, nextPage, { replace = false,filtersOverride } = {}) => {
+  const fetchPage = async (panel, nextPage, { replace = false } = {}) => {
     if (typeof panel.loadData !== "function") return;
+
     const key = panel.key;
     try {
       setLoading((s) => ({ ...s, [key]: true }));
       setErr((s) => ({ ...s, [key]: null }));
 
-      const res = await panel.loadData({
-        page: nextPage,
-        pageSize: PAGE_SIZE,
-        ...(filtersOverride || filters[key] || {}),
-      });
+      const res = await panel.loadData({ page: nextPage, pageSize: PAGE_SIZE });
 
       // ---- normalize response ----
       let rows = [];
@@ -188,8 +176,14 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
         return { ...s, [key]: { columns, rows: [...prevRows, ...rows] } };
       });
 
-      const hasMore = total != null ? nextPage * PAGE_SIZE < total : rows.length === PAGE_SIZE;
-      setPageState((s) => ({ ...s, [key]: { page: nextPage, pageSize: PAGE_SIZE, total, hasMore } }));
+      const hasMore = total != null
+        ? nextPage * PAGE_SIZE < total
+        : rows.length === PAGE_SIZE;
+
+      setPageState((s) => ({
+        ...s,
+        [key]: { page: nextPage, pageSize: PAGE_SIZE, total, hasMore },
+      }));
     } catch (e) {
       setErr((s) => ({ ...s, [key]: e?.message || "Failed to load" }));
     } finally {
@@ -210,82 +204,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
     pruneTo(panel.key);
     await fetchPage(panel, 1, { replace: true });
   };
-
-  function openFilter(panel) {
-    const key = panel.key;
-    const current = filters[key] || {};
-    setFilterDialog({
-      open: true,
-      panelKey: key,
-      draft: {
-        bag_no: current.bag_no || "",
-        status: current.status || "",
-        created_from: current.created_from || "",
-        created_to: current.created_to || "",
-      },
-    });
-  }
-
-  async function applyFilter() {
-    const { panelKey, draft } = filterDialog;
-    setFilters((s) => ({ ...s, [panelKey]: { ...draft } }));
-    setFilterDialog({ open: false, panelKey: null, draft: { bag_no: "", status: "", created_from: "", created_to: "" } });
-    const panel = panels.find((p) => p.key === panelKey);
-    if (panel) await fetchPage(panel, 1, { replace: true, filtersOverride: draft });
-  }
-
-  async function handleClearFilter(panel) {
-    const key = panel.key;
-    setFilters((s) => ({ ...s, [key]: {} }));
-    //await fetchPage(panel, 1, { replace: true });
-    setPageState((s) => ({ ...s, [key]: { page: 0, pageSize: PAGE_SIZE, total: null, hasMore: true } }));
-    await fetchPage(panel, 1, { replace: true, filtersOverride: {} });
-  }
-
-   async function handleDownload(panel) {
-     const key = panel.key;
-     const f = filters[key] || {};
-     const url = new URL(`${API}/api/post_activation/records/download`);
-     url.searchParams.set("key", key);
-     if (f.bag_no)       url.searchParams.set("bag_no", f.bag_no);
-     if (f.status)       url.searchParams.set("status", f.status);
-     if (f.created_from) url.searchParams.set("created_from", f.created_from);
-     if (f.created_to)   url.searchParams.set("created_to", f.created_to);
-
-     setDownloading((s) => ({ ...s, [key]: true }));
-     try {
-       const resp = await fetch(url.toString(), { credentials: "include" });
-       if (!resp.ok) {
-         const text = await resp.text().catch(() => "");
-         throw new Error(`Download failed (${resp.status}) ${text}`);
-       }
-       const blob = await resp.blob();
-       // Try to honor server filename if provided
-       let filename = `${key}_records.csv`;
-       const cd = resp.headers.get("Content-Disposition");
-       if (cd) {
-         // filename*= or filename=  (basic parse)
-         const mStar = /filename\\*=(?:UTF-8''|)([^;]+)/i.exec(cd);
-         const m = mStar || /filename=\"?([^\";]+)\"?/i.exec(cd);
-         if (m && m[1]) {
-           try { filename = decodeURIComponent(m[1].trim()); } catch { filename = m[1].trim(); }
-         }
-       }
-       const href = URL.createObjectURL(blob);
-       const a = document.createElement("a");
-       a.href = href;
-       a.download = filename;
-       document.body.appendChild(a);
-       a.click();
-       a.remove();
-       URL.revokeObjectURL(href);
-     } catch (e) {
-       console.error("download error", e);
-       alert(`Download failed: ${e?.message || "Unknown error"}`);
-     } finally {
-       setDownloading((s) => ({ ...s, [key]: false }));
-     }
-   }
 
   const renderTable = (key, label) => {
     if (loading && loading[key]) {
@@ -352,52 +270,11 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
       return String(val);
     }
 
-    const f = filters[key] || {};
-    const filterOn = hasActiveFilter(f);
-    const STATUS_OPTIONS = [
-        "Screening",
-        "Screening_Loaded",
-        "Blending",
-        "Blending_Loaded",
-        "De-Dusting",
-        "De-Dusting_Loaded",
-        "De-Magnetize",
-        "De-Magnetize_Loaded",
-        "Crushing",
-        "Crushing_Loaded",
-        "InStock",
-        "Quality"
-      ];
+    const miniThStyle = { border: "1px solid rgba(0,0,0,0.2)", padding: "2px 6px", fontSize: 12, textAlign: "left", whiteSpace: "nowrap" };
+    const miniTdStyle = { border: "1px solid rgba(0,0,0,0.12)", padding: "3px 6px", fontSize: 12, whiteSpace: "nowrap" };
 
-   
     return (
       <div>
-        {/* toolbar: filter chip + buttons */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "8px 12px" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Chip
-              label={filterOn ? "Filters: ON" : "Filters: OFF"}
-              size="small"
-              color={filterOn ? "success" : "default"}
-            />
-            {filterOn && (
-              <Button size="small" onClick={() => handleClearFilter(panel)}>
-                Clear
-              </Button>
-            )}
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-            <Button size="small" onClick={() => openFilter(panel)}>Filter</Button>
-             <Button
-               size="small"
-               disabled={!!downloading[key]}
-               onClick={() => handleDownload(panel)}
-             >
-               {downloading[key] ? "Downloading…" : "Download"}
-             </Button>
-          </div>
-        </div>
-
         <TableContainer style={{ maxHeight: viewportPx, minHeight: viewportPx, overflowY: "auto", overflowX: "auto" }}>
           <Table size="small" stickyHeader style={{ tableLayout: "auto", minWidth: 720 }}>
             <TableHead>
@@ -480,69 +357,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
             Load {PAGE_SIZE} more
           </Button>
         </div>
-
-        {/* Filter dialog scoped to this panel */}
-        <Dialog
-          open={filterDialog.open && filterDialog.panelKey === key}
-          onClose={() => setFilterDialog({ open: false, panelKey: null, draft: { bag_no: "", status: "", created_from: "", created_to: "" } })}
-          fullWidth
-          maxWidth="sm"
-        >
-          <DialogTitle>Filter — {label}</DialogTitle>
-          <DialogContent dividers>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginTop: 8 }}>
-              <TextField
-                label="Bag No (contains)"
-                size="small"
-                value={filterDialog.draft.bag_no}
-                onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, bag_no: e.target.value } }))}
-              />
-              <FormControl size="small">
-                <InputLabel>Status</InputLabel>
-                <Select
-                  label="Status"
-                  value={filterDialog.draft.status || ""}
-                  onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, status: e.target.value } }))}
-                >
-                  <MenuItem value="">{/* empty = any */}</MenuItem>
-                  {STATUS_OPTIONS.map((st) => (
-                    <MenuItem key={st} value={st}>{st}</MenuItem>
-                  ))}
-                </Select>
-              </FormControl>
-              <TextField
-                label="Created From"
-                type="date"
-                size="small"
-                InputLabelProps={{ shrink: true }}
-                value={filterDialog.draft.created_from || ""}
-                onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, created_from: e.target.value } }))}
-              />
-              <TextField
-                label="Created To"
-                type="date"
-                size="small"
-                InputLabelProps={{ shrink: true }}
-                value={filterDialog.draft.created_to || ""}
-                onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, created_to: e.target.value } }))}
-              />
-            </div>
-          </DialogContent>
-          <DialogActions>
-            <Button onClick={() => setFilterDialog({ open: false, panelKey: null, draft: { bag_no: "", status: "", created_from: "", created_to: "" } })}>
-              Cancel
-            </Button>
-            <Button color="warning" onClick={() => {
-              // Only clear the *draft* inputs; user will press Apply to commit
-              setFilterDialog(s => ({ ...s, draft: { bag_no: "", status: "", created_from: "", created_to: "" } }));
-            }}>
-              Clear
-            </Button>
-            <Button variant="contained" onClick={applyFilter}>
-              Apply
-            </Button>
-          </DialogActions>
-        </Dialog>
       </div>
     );
   };

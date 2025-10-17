@@ -850,7 +850,7 @@ router.get("/quality-params/metrics", authenticate, async (req, res) => {
       if (!gradeMap.__DEFAULT__) {
         gradeMap.__DEFAULT__ = [{ key: "CTC", label: "CTC", min: 0, max: 100, step: STEP }];
       }
-
+      
       return res.json({ success: true, data: gradeMap, meta: { includeInactive } });
     } finally {
       res.locals && res.locals.clientReleased ? null : client.release();

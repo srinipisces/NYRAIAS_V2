@@ -680,7 +680,7 @@ const moveToStock = async () => {
                             <Typography fontSize={13} fontWeight={600}>{bag.bag_no}</Typography>
                             <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
                               <Chip label={`${bw} kg`} size="small" variant="outlined" />
-                              <Chip label={new Date(bag.screening_out_dt).toLocaleString()} size="small" variant="outlined" />
+                              <Chip label={bag.grade} size="small" variant="outlined" />
                             </Stack>
                           </Box>
                           <Tooltip title={busy ? "Machine busy" : (maxed ? "Max 4 bags can be loaded" : "Load into screening")}>
@@ -1091,7 +1091,7 @@ const moveToStock = async () => {
                   disabled={!canMoveToStock}
                   onClick={moveToStock}
                 >
-                  Move to Quality
+                  Done
                 </Button>
               </Stack>
             </Paper>

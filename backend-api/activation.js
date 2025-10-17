@@ -13,21 +13,34 @@ const { getKolkataDayString, formatToKolkataDay } = require('./date');
 //   minutes=1..720 (optional; default 360)
 //   round=0..3 (optional; default 2)
 // GET /api/kiln/loads?k iln=Kiln%20A
+// GET /api/activation/kiln/loads?kiln=Kiln%20A
 router.get("/kiln/loads", authenticate, async (req, res) => {
+  function assertSafeIdent(s) {
+    if (!/^[a-z0-9_]+$/i.test(s)) throw new Error("unsafe ident");
+  }
+
   try {
     const { accountid } = req.user || {};
-    if (!accountid) return res.status(401).json({ success: false, error: "Unauthorized" });
-    if (!/^[a-z0-9_]+$/i.test(accountid)) {
+    if (!accountid) {
+      return res.status(401).json({ success: false, error: "Unauthorized" });
+    }
+    try { assertSafeIdent(accountid); } catch {
       return res.status(400).json({ success: false, error: "Invalid account id" });
     }
-    const table = `${accountid}_material_outward_bag`;
 
+    const table = `${accountid}_material_outward_bag`;
     const kilnParam = String(req.query.kiln || "").trim();
-    if (!["Kiln A", "Kiln B", "Kiln C"].includes(kilnParam)) {
-      return res.status(400).json({ success: false, error: "kiln must be one of A, B, C" });
+    const VALID_KILNS = new Set(["Kiln A", "Kiln B", "Kiln C"]);
+
+    if (!VALID_KILNS.has(kilnParam)) {
+      return res.status(400).json({
+        success: false,
+        error: "kiln must be one of 'Kiln A', 'Kiln B', or 'Kiln C'",
+      });
     }
 
-    const sql = `
+    // Recent (last 6 hours), newest first — same as your existing logic
+    const recentSql = `
       SELECT
         mob.bag_no,
         mob.kiln,
@@ -40,171 +53,272 @@ router.get("/kiln/loads", authenticate, async (req, res) => {
         )::float AS "hoursAgo"
       FROM ${table} AS mob
       WHERE mob.kiln_feed_status = 'loaded'
-        AND mob.kiln = '${kilnParam}'
+        AND mob.kiln = $1
         AND mob.kiln_load_time >= NOW() - INTERVAL '6 hours'
       ORDER BY mob.kiln_load_time DESC
       LIMIT 500;
     `;
-    
-    const { rows } = await pool.query(sql);
-    return res.json(rows);
+
+    // "Today" in IST (Asia/Kolkata) local date
+    const todaySql = `
+      SELECT
+        COUNT(*)::int AS "bagCount",
+        COALESCE(
+          ROUND(SUM(COALESCE(mob.kiln_loaded_weight, 0))::numeric, 2),
+          0
+        )::float AS "totalWeightKg"
+      FROM ${table} AS mob
+      WHERE mob.kiln_feed_status = 'loaded'
+        AND mob.kiln = $1
+        AND (mob.kiln_load_time AT TIME ZONE 'Asia/Kolkata')::date
+            = (NOW() AT TIME ZONE 'Asia/Kolkata')::date;
+    `;
+
+    const [recentRes, todayRes] = await Promise.all([
+      pool.query(recentSql, [kilnParam]),
+      pool.query(todaySql, [kilnParam]),
+    ]);
+
+    const loads = recentRes.rows;
+    const today = todayRes.rows[0] || { bagCount: 0, totalWeightKg: 0 };
+
+    return res.json({
+      success: true,
+      kiln: kilnParam,
+      loads,
+      today,
+    });
   } catch (err) {
-    console.error("GET /api/kiln/loads error:", err);
+    console.error("GET /api/activation/kiln/loads error:", err);
     return res.status(500).json({ success: false, error: "Internal server error" });
   }
 });
 
-
-router.post("/kilnfeed", authenticate, checkAccess('Operations.Activation.Kiln Feed'), async (req, res) => {
-  const { userid, accountid } = req.user;
-  const rawtable = `${accountid}_rawmaterial_rcvd`;
-  const table = `${accountid}_material_outward_bag`;
-  const historyTable = `${accountid}_rawmaterial_inward_history`;
-
-  const { inward_number, bag_no, bags_loaded_for, kiln_loaded_bag_weight } = req.body;
-  const day = getKolkataDayString(); // 'YYYY-MM-DD'
-
-  let client;
-
-  try {
-    client = await pool.connect();
-    await client.query("BEGIN");
-
-    // ✅ Pre-check: is this bag already loaded?
-    const preCheck = await client.query(
-      `SELECT 1 FROM ${table}
-       WHERE inward_number = $1 AND bag_no = $2 AND kiln_feed_status = 'loaded'`,
-      [inward_number, bag_no]
-    );
-
-    if (preCheck.rowCount > 0) {
-      await client.query("ROLLBACK");
-      return res.status(409).json({ error: "Bag is already loaded in kiln" });
+// POST /api/activation/kilnfeed
+router.post(
+  "/kilnfeed",
+  authenticate,
+  checkAccess("Operations.Activation.Kiln Feed"),
+  async (req, res) => {
+    function assertSafeIdent(s) {
+      if (!/^[a-z0-9_]+$/i.test(s)) throw new Error("unsafe ident");
     }
 
-    // ✅ 1. Mark bag as loaded
-    await client.query(
-      `UPDATE ${table} 
-       SET kiln_load_time = current_timestamp,
-           kiln = $3,
-           kiln_feed_status = 'loaded',
-           kiln_loaded_weight = $4,
-           kiln_load_user = $5 
-       WHERE inward_number = $1 AND bag_no = $2`,
-      [inward_number, bag_no, bags_loaded_for, kiln_loaded_bag_weight,userid]
-    );
-
-    // ✅ 2. Check if all bags for this inward_number are loaded
-    const checkResult = await client.query(
-      `SELECT COUNT(*) FILTER (WHERE kiln_feed_status IS DISTINCT FROM 'loaded') AS pending
-       FROM ${table}
-       WHERE inward_number = $1
-         AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
-      [inward_number]
-    );
-
-    const pending = parseInt(checkResult.rows[0].pending, 10);
-
-    if (pending === 0) {
-      await client.query(
-        `UPDATE ${rawtable}
-         SET kiln_feed_status = 'completed',
-             kiln_feed_status_upddt = current_timestamp,
-             kiln_feed_userid = $2
-         WHERE inward_number = $1`,
-        [inward_number, userid]
-      );
+    const { userid, accountid } = req.user || {};
+    try { assertSafeIdent(accountid); } catch {
+      return res.status(400).json({ success: false, error: "Invalid account id" });
     }
 
-    // ✅ 3. Update or insert into history
-    const historyCheck = await client.query(
-      `SELECT * FROM ${historyTable} WHERE inward_number = $1 AND day::date = $2`,
-      [inward_number, day]
-    );
+    const rawtable     = `${accountid}_rawmaterial_rcvd`;
+    const table        = `${accountid}_material_outward_bag`;
+    const historyTable = `${accountid}_rawmaterial_inward_history`;
 
-    if (historyCheck.rowCount > 0) {
-      // 🔄 Update existing history row
-      await client.query(
-        `UPDATE ${historyTable}
-         SET kiln_loaded_weight = COALESCE(kiln_loaded_weight, 0) + $1,
-             kiln_load_no_bags = COALESCE(kiln_load_no_bags, 0) + 1,
-             Gcharcoal_stock = COALESCE(Gcharcoal_stock, 0) - $1
-         WHERE inward_number = $2 AND day::date = $3`,
-        [Number(kiln_loaded_bag_weight), inward_number, day]
+    const { inward_number, bag_no, bags_loaded_for, kiln_loaded_bag_weight } = req.body || {};
+    const VALID_KILNS = new Set(["Kiln A", "Kiln B", "Kiln C"]);
+
+    if (!inward_number || !bag_no) {
+      return res.status(400).json({ success: false, error: "inward_number and bag_no are required" });
+    }
+    if (!VALID_KILNS.has(String(bags_loaded_for))) {
+      return res.status(400).json({ success: false, error: "bags_loaded_for must be 'Kiln A' | 'Kiln B' | 'Kiln C'" });
+    }
+    const w = Number(kiln_loaded_bag_weight);
+    if (!Number.isFinite(w) || w <= 0) {
+      return res.status(400).json({ success: false, error: "kiln_loaded_bag_weight must be a positive number" });
+    }
+
+    // Helper: 'YYYY-MM-DD' for IST
+    const getKolkataDayString = () =>
+      new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" });
+
+    const day = getKolkataDayString(); // 'YYYY-MM-DD'
+
+    let client;
+    try {
+      client = await pool.connect();
+      await client.query("BEGIN");
+
+      // ✅ Pre-check: already loaded?
+      const preCheck = await client.query(
+        `SELECT 1 FROM ${table}
+         WHERE inward_number = $1 AND bag_no = $2 AND kiln_feed_status = 'loaded'`,
+        [inward_number, bag_no]
       );
-    } else {
-      // ➕ Insert new row for today
-      const latest = await client.query(
-        `SELECT * FROM ${historyTable} WHERE inward_number = $1 ORDER BY day DESC LIMIT 1`,
+      if (preCheck.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return res.status(409).json({ success: false, error: "Bag is already loaded in kiln" });
+      }
+
+      // ✅ 1) Mark bag as loaded
+      const upd = await client.query(
+        `UPDATE ${table}
+           SET kiln_load_time    = current_timestamp,
+               kiln              = $3,
+               kiln_feed_status  = 'loaded',
+               kiln_loaded_weight= $4,
+               kiln_load_user    = $5
+         WHERE inward_number = $1 AND bag_no = $2`,
+        [inward_number, bag_no, bags_loaded_for, w, userid]
+      );
+
+      if (upd.rowCount === 0) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({ success: false, error: "Bag not found for the given inward_number" });
+      }
+
+      // ✅ 2) If all bags for this inward are loaded, mark inward complete
+      const checkResult = await client.query(
+        `SELECT COUNT(*) FILTER (WHERE kiln_feed_status IS DISTINCT FROM 'loaded') AS pending
+           FROM ${table}
+          WHERE inward_number = $1
+            AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
         [inward_number]
       );
+      const pending = parseInt(checkResult.rows[0].pending, 10);
+      if (pending === 0) {
+        await client.query(
+          `UPDATE ${rawtable}
+              SET kiln_feed_status      = 'completed',
+                  kiln_feed_status_upddt= current_timestamp,
+                  kiln_feed_userid      = $2
+            WHERE inward_number = $1`,
+          [inward_number, userid]
+        );
+      }
 
-      const base = latest.rows[0] || {};
-
-      const aggResult = await client.query(
-        `SELECT 
-           SUM(kiln_loaded_weight) AS total_weight
-         FROM ${table}
-         WHERE inward_number = $1 
-           AND kiln_feed_status = 'loaded'
-           AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
-        [inward_number]
+      // ✅ 3) Upsert history for IST "today"
+      const historyCheck = await client.query(
+        `SELECT 1 FROM ${historyTable} WHERE inward_number = $1 AND day::date = $2`,
+        [inward_number, day]
       );
 
-      const totalWeight = Number(aggResult.rows[0]?.total_weight || 0);
-      const totalBags = 1; // reset for the day
-      const newGCharcoalStock = (base.gcharcoal_weight_after_crusher || 0) - totalWeight;
+      if (historyCheck.rowCount > 0) {
+        await client.query(
+          `UPDATE ${historyTable}
+              SET kiln_loaded_weight = COALESCE(kiln_loaded_weight, 0) + $1,
+                  kiln_load_no_bags = COALESCE(kiln_load_no_bags, 0) + 1,
+                  Gcharcoal_stock   = COALESCE(Gcharcoal_stock, 0) - $1
+            WHERE inward_number = $2 AND day::date = $3`,
+          [w, inward_number, day]
+        );
+      } else {
+        const latest = await client.query(
+          `SELECT * FROM ${historyTable}
+            WHERE inward_number = $1
+            ORDER BY day DESC
+            LIMIT 1`,
+          [inward_number]
+        );
+        const base = latest.rows[0] || {};
 
-      await client.query(
-        `INSERT INTO ${historyTable}
-          (day, inward_number, supplier_name, supplier_weight, weight_at_security,
-           raw_material_inward_no_bags, raw_material_inward_weight, raw_material_inward_stock,
-           raw_material_inward_loss_or_gain, raw_material_inward_status,
-           raw_material_outward_status, raw_material_outward_no_bags,
-           Gcharcoal_Weight_after_crusher, Physical_Loss_in_crusher, Total_weight_from_crusher,
-           kiln_loaded_weight, kiln_load_no_bags, Gcharcoal_stock)
-         VALUES (
-           $1, $2, $3, $4, $5,
-           $6, $7, $8,
-           $9, $10,
-           $11, $12,
-           $13, $14, $15,
-           $16, $17, $18
-         )`,
-        [
-          day,
-          inward_number,
-          base.supplier_name || '',
-          base.supplier_weight || 0,
-          base.weight_at_security || 0,
-          base.raw_material_inward_no_bags || 0,
-          base.raw_material_inward_weight || 0,
-          base.raw_material_inward_stock || 0,
-          base.raw_material_inward_loss_or_gain || 0,
-          base.raw_material_inward_status || null,
-          base.raw_material_outward_status || null,
-          base.raw_material_outward_no_bags || 0,
-          base.gcharcoal_weight_after_crusher || 0,
-          base.physical_loss_in_crusher || 0,
-          base.total_weight_from_crusher || 0,
-          totalWeight,
-          totalBags,
-          newGCharcoalStock
-        ]
-      );
+        const aggResult = await client.query(
+          `SELECT SUM(kiln_loaded_weight) AS total_weight
+             FROM ${table}
+            WHERE inward_number = $1
+              AND kiln_feed_status = 'loaded'
+              AND grade IN ('Grade 1st stage - Rotary A', 'Grade 2nd stage - Rotary B')`,
+          [inward_number]
+        );
+
+        const totalWeight = Number(aggResult.rows[0]?.total_weight || 0);
+        const totalBags   = 1; // for "today"
+        const newGStock   = (base.gcharcoal_weight_after_crusher || 0) - totalWeight;
+
+        await client.query(
+          `INSERT INTO ${historyTable}
+            (day, inward_number, supplier_name, supplier_weight, weight_at_security,
+             raw_material_inward_no_bags, raw_material_inward_weight, raw_material_inward_stock,
+             raw_material_inward_loss_or_gain, raw_material_inward_status,
+             raw_material_outward_status, raw_material_outward_no_bags,
+             Gcharcoal_Weight_after_crusher, Physical_Loss_in_crusher, Total_weight_from_crusher,
+             kiln_loaded_weight, kiln_load_no_bags, Gcharcoal_stock)
+           VALUES (
+             $1, $2, $3, $4, $5,
+             $6, $7, $8,
+             $9, $10,
+             $11, $12,
+             $13, $14, $15,
+             $16, $17, $18
+           )`,
+          [
+            day,
+            inward_number,
+            base?.supplier_name || "",
+            base?.supplier_weight || 0,
+            base?.weight_at_security || 0,
+            base?.raw_material_inward_no_bags || 0,
+            base?.raw_material_inward_weight || 0,
+            base?.raw_material_inward_stock || 0,
+            base?.raw_material_inward_loss_or_gain || 0,
+            base?.raw_material_inward_status || null,
+            base?.raw_material_outward_status || null,
+            base?.raw_material_outward_no_bags || 0,
+            base?.gcharcoal_weight_after_crusher || 0,
+            base?.physical_loss_in_crusher || 0,
+            base?.total_weight_from_crusher || 0,
+            totalWeight,
+            totalBags,
+            newGStock
+          ]
+        );
+      }
+
+      // ✅ 4) Build the same response shape as GET /kiln/loads — do it
+      //     inside the transaction for immediate read-your-writes.
+      const recentSql = `
+        SELECT
+          mob.bag_no,
+          mob.kiln,
+          mob.kiln_loaded_weight,
+          mob.kiln_feed_status,
+          mob.kiln_load_time,
+          ROUND(
+            (EXTRACT(EPOCH FROM (NOW() - mob.kiln_load_time)) / 3600.0)::numeric,
+            2
+          )::float AS "hoursAgo"
+        FROM ${table} AS mob
+        WHERE mob.kiln_feed_status = 'loaded'
+          AND mob.kiln = $1
+          AND mob.kiln_load_time >= NOW() - INTERVAL '6 hours'
+        ORDER BY mob.kiln_load_time DESC
+        LIMIT 500;
+      `;
+
+      const todaySql = `
+        SELECT
+          COUNT(*)::int AS "bagCount",
+          COALESCE(ROUND(SUM(COALESCE(mob.kiln_loaded_weight, 0))::numeric, 2), 0)::float
+            AS "totalWeightKg"
+        FROM ${table} AS mob
+        WHERE mob.kiln_feed_status = 'loaded'
+          AND mob.kiln = $1
+          AND (mob.kiln_load_time AT TIME ZONE 'Asia/Kolkata')::date
+              = (NOW() AT TIME ZONE 'Asia/Kolkata')::date;
+      `;
+
+      const [recentRes, todayRes] = await Promise.all([
+        client.query(recentSql, [bags_loaded_for]),
+        client.query(todaySql,  [bags_loaded_for]),
+      ]);
+
+      await client.query("COMMIT");
+
+      return res.json({
+        success: true,
+        kiln: bags_loaded_for,
+        loads: recentRes.rows,
+        today: todayRes.rows[0] || { bagCount: 0, totalWeightKg: 0 },
+      });
+    } catch (err) {
+      console.error(new Date().toLocaleString(), ":", err);
+      if (client) await client.query("ROLLBACK");
+      return res.status(500).json({ success: false, error: "Database error" });
+    } finally {
+      if (client) client.release();
     }
-
-    await client.query("COMMIT");
-    res.json({ operation: 'success' });
-
-  } catch (err) {
-    console.error(new Date().toLocaleString(), ":", err);
-    if (client) await client.query("ROLLBACK");
-    res.status(500).json({ error: "Database error" });
-  } finally {
-    if (client) client.release();
   }
-});
+);
+
 
 router.get("/inwardnumber_kilnfeed_bag_no_select", authenticate, async (req, res) => {
   const { accountid } = req.user || {};
@@ -294,24 +408,59 @@ router.post("/kilnoutput", authenticate,checkAccess('Operations.Activation.Kiln 
 })
 
 router.get("/kilnoutput", authenticate, async (req, res) => {
-  const { accountid } = req.user;
+  const { accountid } = req.user || {};
+  const kiln = String(req.query.kiln || "");
+
+  // guards
+  if (!/^[a-z0-9_]+$/i.test(accountid)) {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+  if (!/^[a-z0-9 _-]+$/i.test(kiln) || kiln.length > 100) {
+    return res.status(400).json({ error: "Invalid kiln" });
+  }
+
   const table = `${accountid}_kiln_output`;
-  try {
-    const kiln = String(req.query.kiln || "");
-    const sql = `
-      SELECT bag_no, weight_with_stones
+
+  const sql = `
+    WITH ist AS (
+      SELECT date_trunc('day', now() AT TIME ZONE 'Asia/Kolkata') AS d0
+    ),
+    last10 AS (
+      SELECT
+        bag_no,
+        weight_with_stones AS weight,
+        write_timestamp
       FROM ${table}
       WHERE from_the_kiln = $1
       ORDER BY write_timestamp DESC
       LIMIT 10
-    `;
+    ),
+    today AS (
+      SELECT
+        COUNT(*)::int AS c,
+        COALESCE(SUM(weight_with_stones), 0)::numeric AS w
+      FROM ${table}, ist
+      WHERE from_the_kiln = $1
+        AND (write_timestamp AT TIME ZONE 'Asia/Kolkata') >= ist.d0
+        AND (write_timestamp AT TIME ZONE 'Asia/Kolkata') <  ist.d0 + INTERVAL '1 day'
+    )
+    SELECT
+      (SELECT json_agg(l ORDER BY l.write_timestamp DESC) FROM last10 l) AS rows,
+      (SELECT c FROM today)  AS today_count,
+      (SELECT w FROM today)  AS today_weight
+  `;
+
+  try {
     const { rows } = await pool.query(sql, [kiln]);
-    res.json({ rows }); // no columns/time
+    const payload = rows?.[0] || { rows: [], today_count: 0, today_weight: 0 };
+    res.json(payload);
   } catch (err) {
     console.error(new Date().toISOString(), ":", err);
     res.status(500).json({ error: "Database error" });
   }
 });
+
+
 
 // GET /api/activation/kilnFeedQuality
 // Query params:
@@ -1315,58 +1464,369 @@ router.post('/kilnoutputrecords/delete', authenticate, async (req, res) => {
   }
 });
 
+router.get("/kiln_feed_bag_quality", authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const table = `${accountid}_material_outward_bag`;
+
+  const PAGE_SIZE = 50;                            // fixed size
+  const page = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const toHeader = (name) =>
+    name.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+  try {
+    const where = `kiln_quality_updt IS NULL`;
+
+    // total count for current filter
+    const { rows: cntRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM ${table} WHERE ${where}`
+    );
+    const total = cntRows?.[0]?.total ?? 0;
+
+    // page data
+    const dataSql = `
+      SELECT
+        write_timestamp            AS time_generated,
+        bag_no,
+        weight        AS weight,
+        userid         AS userid
+      FROM ${table}
+      WHERE ${where}
+      ORDER BY write_timestamp DESC NULLS LAST
+      LIMIT $1 OFFSET $2
+    `;
+    const result = await pool.query(dataSql, [PAGE_SIZE, offset]);
+
+    // columns (minimal; keep your aliases)
+    const columns = result.fields.map((f) => {
+      const field = f.name;
+      let type = "string";
+      if (field === "time_generated") type = "datetime";
+      else if (field === "weight") type = "number";
+      return { field, headerName: toHeader(field), type };
+    });
+
+    res.json({
+      columns,
+      rows: result.rows,
+      pagination: {
+        page,                   // 1-based
+        pageSize: PAGE_SIZE,    // fixed 50
+        total,
+        totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+        hasMore: offset + result.rows.length < total,
+      },
+    });
+  } catch (err) {
+    console.error(new Date().toLocaleString(), ":", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+router.post("/kiln_feed_bag_quality", authenticate, checkAccess('Operations.Activation.Kiln Feed Quality'),async (req, res) => {
+  const { accountid, userid} = req.user || {};
+  const table = `${accountid}_material_outward_bag`;
+
+  const {
+    bag_no,          // required
+    grade_plus2,
+    grade_2by3,
+    grade_3by6,
+    grade_6by8,
+    grade_8by10,
+    grade_10by12,
+    grade_12by14,
+    grade_minus14,
+    feed_moisture,
+    dust,
+    feed_volatile,
+    remarks,            // -> quality_remarks
+  } = req.body || {};
+
+  if (!bag_no) {
+    return res.status(400).json({ error: "bag_no is required" });
+  }
 
 
+
+  // canonical SQL (with quality_4by8)
+  const sql = `
+    UPDATE ${table}
+    SET
+      kiln_quality_updt = CURRENT_TIMESTAMP,
+      kiln_feed_quality_sysentry = CURRENT_TIMESTAMP,
+      kiln_quality_updt_user = $14,
+      grade_plus2 = $2,
+      grade_2by3 = $3,
+      grade_3by6 = $4,
+      grade_6by8 = $5,
+      grade_8by10 = $6,
+      grade_10by12 = $7,
+      grade_12by14 = $8,
+      grade_minus14 = $9,
+      feed_moisture = $10,
+      dust = $11,
+      feed_volatile = $12,
+      remarks = $13
+    WHERE bag_no = $1
+    RETURNING
+      bag_no
+      
+  `;
+
+  const params = [
+    bag_no,
+    grade_plus2 ?? null,
+    grade_2by3 ?? null,
+    grade_3by6 ?? null,
+    grade_6by8 ?? null,
+    grade_8by10 ?? null,
+    grade_10by12 ?? null,
+    grade_12by14 ?? null,
+    grade_minus14 ?? null,
+    feed_moisture ?? null,
+    dust ?? null,
+    feed_volatile ?? null,
+    (typeof remarks === "string" ? remarks.trim() : remarks) ?? null,
+    userid
+  ];
+
+  try {
+    const result = await pool.query(sql, params);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Bag not found" });
+    }
+    return res.json({ success: true, updated: result.rows[0] });
+  } catch (err) {
+    
+        const now = new Date();
+        console.error(now.toLocaleString(), ":", err);
+        return res.status(500).json({ error: "Database error" });
+      
+    }
+
+});
+
+// GET /api/activation/kiln_output_bag_quality?page=1
+router.get("/kiln_output_bag_quality", authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const table = `${accountid}_kiln_output`;
+
+  const PAGE_SIZE = 50;                            // fixed size
+  const page = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset = (page - 1) * PAGE_SIZE;
+
+  const toHeader = (name) =>
+    name.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
+
+  try {
+    const where = `quality_updt_time IS NULL`;
+
+    // total count for current filter
+    const { rows: cntRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM ${table} WHERE ${where}`
+    );
+    const total = cntRows?.[0]?.total ?? 0;
+
+    // page data
+    const dataSql = `
+      SELECT
+        kiln_output_dt            AS time_generated,
+        bag_no,
+        weight_with_stones        AS weight,
+        userid_kilnoutput         AS userid
+      FROM ${table}
+      WHERE ${where}
+      ORDER BY kiln_output_dt DESC NULLS LAST
+      LIMIT $1 OFFSET $2
+    `;
+    const result = await pool.query(dataSql, [PAGE_SIZE, offset]);
+
+    // columns (minimal; keep your aliases)
+    const columns = result.fields.map((f) => {
+      const field = f.name;
+      let type = "string";
+      if (field === "time_generated") type = "datetime";
+      else if (field === "weight") type = "number";
+      return { field, headerName: toHeader(field), type };
+    });
+
+    res.json({
+      columns,
+      rows: result.rows,
+      pagination: {
+        page,                   // 1-based
+        pageSize: PAGE_SIZE,    // fixed 50
+        total,
+        totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+        hasMore: offset + result.rows.length < total,
+      },
+    });
+  } catch (err) {
+    console.error(new Date().toLocaleString(), ":", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+
+router.post("/kiln_output_bag_quality", authenticate, checkAccess('Operations.Activation.Kiln Output Quality'),async (req, res) => {
+  const { accountid, userid} = req.user || {};
+  const table = `${accountid}_kiln_output`;
+
+  const {
+    bag_no,          // required
+    plus3,
+    three_four,         // -> quality_3by4
+    four_eight,         // -> quality_4by8  (may be quaility_4by8 in some schemas)
+    eight_twelve,       // -> quality_8by12
+    twelve_thirty,      // -> quality_12by30
+    minus30,            // -> quality_minus_30
+    cbd,                // -> quality_cbd
+    ctc,                // -> quality_ctc
+    remarks,            // -> quality_remarks
+  } = req.body || {};
+
+  if (!bag_no) {
+    return res.status(400).json({ error: "bag_no is required" });
+  }
+
+
+
+  // canonical SQL (with quality_4by8)
+  const sql = `
+    UPDATE ${table}
+    SET
+      quality_updt_time = CURRENT_TIMESTAMP,
+      quality_updt_user = $8,
+      quality_plus_3 = $11,
+      quality_3by4      = $2,
+      quality_4by8      = $3,
+      quality_8by12     = $4,
+      quality_12by30    = $5,
+      quality_minus_30  = $6,
+      quality_cbd       = $7,
+      quality_ctc       = $9,
+      quality_remarks   = $10
+    WHERE bag_no = $1
+    RETURNING
+      bag_no,
+      quality_updt_time,
+      quality_updt_user,
+      quality_3by4,
+      quality_4by8,
+      quality_8by12,
+      quality_12by30,
+      quality_minus_30,
+      quality_cbd,
+      quality_ctc,
+      quality_remarks
+      
+  `;
+
+  const params = [
+    bag_no,
+    three_four ?? null,
+    four_eight ?? null,
+    eight_twelve ?? null,
+    twelve_thirty ?? null,
+    minus30 ?? null,
+    cbd ?? null,
+    userid,
+    ctc ?? null,
+    (typeof remarks === "string" ? remarks.trim() : remarks) ?? null,
+    plus3 ?? null,
+  ];
+
+  try {
+    const result = await pool.query(sql, params);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: "Bag not found" });
+    }
+    return res.json({ success: true, updated: result.rows[0] });
+  } catch (err) {
+    
+        const now = new Date();
+        console.error(now.toLocaleString(), ":", err);
+        return res.status(500).json({ error: "Database error" });
+      
+    }
+
+});
+
+
+// GET /api/activation/ds_bag_quality?page=1
+// GET /api/activation/ds_bag_quality?page=1
 router.get("/ds_bag_quality", authenticate, async (req, res) => {
   const { accountid } = req.user;
   const table = `${accountid}_destoning`;
 
-  // helper: Title Case from snake_case
+  const PAGE_SIZE = 50;                           // fixed to 50 rows
+  const page = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset = (page - 1) * PAGE_SIZE;
+
   const toHeader = (name) =>
-    name
-      .replace(/_/g, " ")
-      .replace(/\b\w/g, (l) => l.toUpperCase());
+    name.replace(/_/g, " ").replace(/\b\w/g, (l) => l.toUpperCase());
 
   try {
-    const sql = `
+    const where = `quality_updt_time IS NULL`;
+
+    // Total rows for current filter
+    const { rows: cntRows } = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM ${table} WHERE ${where}`
+    );
+    const total = cntRows?.[0]?.total ?? 0;
+
+    // Page query: include loaded_bags (jsonb -> json for clean serialization)
+    const dataSql = `
       SELECT
         bag_generated_timestamp AS time_generated,
         ds_bag_no,
         weight_out AS weight,
-        userid
+        userid,
+        to_json(loaded_bags) as loaded_bags
       FROM ${table}
-      WHERE quality_updt_time IS NULL
+      WHERE ${where}
       ORDER BY bag_generated_timestamp DESC NULLS LAST
+      LIMIT $1 OFFSET $2
     `;
+    const result = await pool.query(dataSql, [PAGE_SIZE, offset]);
 
-    const result = await pool.query(sql);
-    const rows = result.rows;
+    // Columns metadata: exclude loaded_bags, no width hints at all
+    const columns = result.fields
+      .map((f) => f.name)
+      .filter((name) => name !== "loaded_bags")
+      .map((field) => {
+        let type = "string";
+        if (field === "time_generated") type = "datetime";
+        else if (field === "weight") type = "number";
+        return {
+          field,
+          headerName: toHeader(field),
+          type,
+        };
+      });
 
-    // Build column metadata from result fields
-    const columns = result.fields.map((f) => {
-      const field = f.name; // uses the aliased names above
-      // optional basic typing hints (clients can ignore if not needed)
-      let type = "string";
-      if (field === "time_generated") type = "datetime";
-      else if (field === "weight") type = "number";
-
-      return {
-        field,
-        headerName: toHeader(field), // e.g., "Time Generated"
-        // UI hints your frontend can use (flexible)
-        flex: 1,
-        minWidth: field === "time_generated" ? 180 : 140,
-        type,
-      };
+    res.json({
+      columns,                 // no loaded_bags column
+      rows: result.rows,       // rows DO include loaded_bags
+      pagination: {
+        page,                  // 1-based
+        pageSize: PAGE_SIZE,   // fixed
+        total,
+        totalPages: Math.max(1, Math.ceil(total / PAGE_SIZE)),
+        hasMore: offset + result.rows.length < total,
+      },
     });
-
-    res.json({ columns, rows });
   } catch (err) {
     const now = new Date();
     console.error(now.toLocaleString(), ":", err);
     res.status(500).json({ error: "Database error" });
   }
 });
+
+
 
 // Update de-stoning bag quality (adds quality_ctc, quality_remarks, quality_updt_user, final_destination)
 router.post("/ds_bag_quality", authenticate, checkAccess('Operations.Activation.De-Stoning Quality'),async (req, res) => {
@@ -1375,6 +1835,7 @@ router.post("/ds_bag_quality", authenticate, checkAccess('Operations.Activation.
 
   const {
     ds_bag_no,          // required
+    plus3,
     three_four,         // -> quality_3by4
     four_eight,         // -> quality_4by8  (may be quaility_4by8 in some schemas)
     eight_twelve,       // -> quality_8by12
@@ -1406,7 +1867,8 @@ router.post("/ds_bag_quality", authenticate, checkAccess('Operations.Activation.
       quality_cbd       = $7,
       quality_ctc       = $9,
       quality_remarks   = $10,
-      final_destination = $11
+      final_destination = $11,
+      quality_plus_3 = $12
     WHERE ds_bag_no = $1
     RETURNING
       ds_bag_no,
@@ -1435,6 +1897,7 @@ router.post("/ds_bag_quality", authenticate, checkAccess('Operations.Activation.
     ctc ?? null,
     (typeof remarks === "string" ? remarks.trim() : remarks) ?? null,
     (typeof destination === "string" ? destination.trim() : destination) ?? null,
+    plus3 ?? null
   ];
 
   try {
@@ -1885,5 +2348,39 @@ router.get("/destoning/records.csv", authenticate, async (req, res) => {
     return res.status(500).json({ error: "CSV export error" });
   }
 });
+
+// GET /api/activation/kiln_output/quality?bag_no=KOA_290925_014
+router.get("/kiln_output/quality", authenticate, async (req, res) => {
+  const { accountid } = req.user;
+  const table = `${accountid}_kiln_output`;
+
+  const bagNo = (req.query.bag_no || "").trim();
+  if (!bagNo) return res.status(400).json({ error: "bag_no is required" });
+
+  try {
+    const sql = `
+      SELECT
+        bag_no,
+        quality_plus_3   AS plus3,
+        quality_3by4     AS three_four,
+        quality_4by8     AS four_eight,
+        quality_8by12    AS eight_twelve,
+        quality_12by30   AS twelve_thirty,
+        quality_minus_30 AS minus30,
+        quality_cbd      AS cbd,
+        quality_ctc      AS ctc
+      FROM ${table}
+      WHERE bag_no = $1
+      LIMIT 1
+    `;
+    const { rows } = await pool.query(sql, [bagNo]);
+    if (!rows.length) return res.status(404).json({ error: "kiln bag not found" });
+    res.json(rows[0]);
+  } catch (err) {
+    console.error(new Date().toLocaleString(), ":", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 
 module.exports = router;
