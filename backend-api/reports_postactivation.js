@@ -1880,6 +1880,7 @@ function buildQualitySql_andVals(accountid, body) {
     SELECT
       p.bag_no,
       p.grade,
+      p.bag_weight,
       p.stock_status,
       p.quality
     FROM ${table} p
@@ -1908,6 +1909,7 @@ router.post("/quality_report", authenticate, async (req, res) => {
   const columns = [
     { field: "bag_no", headerName: "Bag No", flex: 1 },
     { field: "grade", headerName: "Grade", flex: 1 },
+    { field: "bag_weight", headerName: "Bag_Weight", flex: 1 },
     { field: "stock_status", headerName: "Status", flex: 1 },
     { field: "quality", headerName: "Quality (JSON)", flex: 1 },
   ];
@@ -1944,6 +1946,284 @@ router.post("/quality_report.csv", authenticate, async (req, res) => {
 
 /* ===================== /QUALITY REPORT (JSON + CSV) ===================== */
 
+/* ===================== BAGS IN STOCK REPORTS (JSON + CSV) ===================== */
+
+/**
+ * JSON – Bags In Stock
+ * GET /api/reports_postactivation/bags_in_stock
+ * No filters – just bags where stock_status is one of:
+ *   Quality, Screening, Crushing, De-Magnetize, De-Dusting, Blending, InStock
+ */
+router.get("/bags_in_stock", authenticate, async (req, res) => {
+  const { accountid } = req.user || {};
+  try { assertSafeIdent(accountid); } catch {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+
+  const table = `${accountid}_postactivation`;
+
+  // Paging
+  const pageSize = Math.max(1, Math.min(200, parseInt(req.query.pageSize ?? "50", 10)));
+  const page     = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset   = (page - 1) * pageSize;
+
+  // Sorting
+  const ALLOWED_SORT = new Set(["bag_no", "grade", "bag_weight", "stock_status"]);
+  const sortRaw = String(req.query.sort || "bag_no");
+  const sort    = ALLOWED_SORT.has(sortRaw) ? sortRaw : "bag_no";
+  const dirRaw  = String(req.query.dir || "asc").toLowerCase();
+  const dirSql  = dirRaw === "desc" ? "DESC" : "ASC";
+  const dir     = dirRaw === "desc" ? "desc" : "asc";
+
+  const whereClause = `
+    WHERE stock_status = ANY (
+      ARRAY[
+        'Quality',
+        'Screening',
+        'Crushing',
+        'De-Magnetize',
+        'De-Dusting',
+        'Blending',
+        'InStock'
+      ]::text[]
+    )
+  `;
+
+  const countSql = `SELECT COUNT(*)::int AS total FROM ${table} ${whereClause}`;
+  const dataSql  = `
+    SELECT
+      bag_no,
+      grade,
+      bag_weight,
+      stock_status
+    FROM ${table}
+    ${whereClause}
+    ORDER BY ${sort} ${dirSql}
+    LIMIT $1 OFFSET $2
+  `;
+
+  try {
+    const totalResult = await pool.query(countSql);
+    const total = totalResult.rows?.[0]?.total ?? 0;
+
+    const dataResult = await pool.query(dataSql, [pageSize, offset]);
+    const rows = dataResult.rows || [];
+
+    return res.json({ rows, total, page, pageSize, sort, dir });
+  } catch (err) {
+    console.error("GET /api/reports_postactivation/bags_in_stock error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * CSV – Bags In Stock
+ * GET /api/reports_postactivation/bags_in_stock.csv
+ * Same dataset, no pagination.
+ */
+router.get("/bags_in_stock.csv", authenticate, async (req, res) => {
+  const { accountid } = req.user || {};
+  try { assertSafeIdent(accountid); } catch {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+
+  const table = `${accountid}_postactivation`;
+
+  const ALLOWED_SORT = new Set(["bag_no", "grade", "bag_weight", "stock_status"]);
+  const sortRaw = String(req.query.sort || "bag_no");
+  const sort    = ALLOWED_SORT.has(sortRaw) ? sortRaw : "bag_no";
+  const dirRaw  = String(req.query.dir || "asc").toLowerCase();
+  const dirSql  = dirRaw === "desc" ? "DESC" : "ASC";
+
+  const sql = `
+    SELECT
+      bag_no,
+      grade,
+      bag_weight,
+      stock_status
+    FROM ${table}
+    WHERE stock_status = ANY (
+      ARRAY[
+        'Quality',
+        'Screening',
+        'Crushing',
+        'De-Magnetize',
+        'De-Dusting',
+        'Blending',
+        'InStock'
+      ]::text[]
+    )
+    ORDER BY ${sort} ${dirSql}
+  `;
+
+  try {
+    const { rows } = await pool.query(sql);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="bags_in_stock.csv"`);
+
+    const esc = (v) =>
+      v == null
+        ? ""
+        : /[",\n]/.test(String(v))
+        ? `"${String(v).replace(/"/g, '""')}"`
+        : String(v);
+
+    res.write("bag_no,grade,bag_weight,stock_status\n");
+    for (const r of rows) {
+      res.write(
+        [
+          esc(r.bag_no),
+          esc(r.grade),
+          esc(r.bag_weight),
+          esc(r.stock_status),
+        ].join(",") + "\n"
+      );
+    }
+    res.end();
+  } catch (err) {
+    console.error("GET /api/reports_postactivation/bags_in_stock.csv error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * JSON – Summary of Bags In Stock
+ * GET /api/reports_postactivation/bags_in_stock_summary
+ * Aggregated by grade.
+ */
+router.get("/bags_in_stock_summary", authenticate, async (req, res) => {
+  const { accountid } = req.user || {};
+  try { assertSafeIdent(accountid); } catch {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+
+  const table = `${accountid}_postactivation`;
+
+  // Paging over aggregated grades
+  const pageSize = Math.max(1, Math.min(200, parseInt(req.query.pageSize ?? "50", 10)));
+  const page     = Math.max(1, parseInt(req.query.page ?? "1", 10));
+  const offset   = (page - 1) * pageSize;
+
+  const ALLOWED_SORT = new Set(["grade", "total_weight", "num_bags"]);
+  const sortRaw = String(req.query.sort || "grade");
+  const sort    = ALLOWED_SORT.has(sortRaw) ? sortRaw : "grade";
+  const dirRaw  = String(req.query.dir || "asc").toLowerCase();
+  const dirSql  = dirRaw === "desc" ? "DESC" : "ASC";
+  const dir     = dirRaw === "desc" ? "desc" : "asc";
+
+  const whereClause = `
+    WHERE stock_status = ANY (
+      ARRAY[
+        'Quality',
+        'Screening',
+        'Crushing',
+        'De-Magnetize',
+        'De-Dusting',
+        'Blending',
+        'InStock'
+      ]::text[]
+    )
+  `;
+
+  const countSql = `
+    SELECT COUNT(DISTINCT grade)::int AS total
+    FROM ${table}
+    ${whereClause}
+  `;
+
+  const dataSql = `
+    SELECT
+      grade,
+      SUM(bag_weight) AS total_weight,
+      COUNT(*)        AS num_bags
+    FROM ${table}
+    ${whereClause}
+    GROUP BY grade
+    ORDER BY ${sort} ${dirSql}
+    LIMIT $1 OFFSET $2
+  `;
+
+  try {
+    const totalResult = await pool.query(countSql);
+    const total = totalResult.rows?.[0]?.total ?? 0;
+
+    const dataResult = await pool.query(dataSql, [pageSize, offset]);
+    const rows = dataResult.rows || [];
+
+    return res.json({ rows, total, page, pageSize, sort, dir });
+  } catch (err) {
+    console.error("GET /api/reports_postactivation/bags_in_stock_summary error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
+
+/**
+ * CSV – Summary of Bags In Stock
+ * GET /api/reports_postactivation/bags_in_stock_summary.csv
+ */
+router.get("/bags_in_stock_summary.csv", authenticate, async (req, res) => {
+  const { accountid } = req.user || {};
+  try { assertSafeIdent(accountid); } catch {
+    return res.status(400).json({ error: "Invalid account id" });
+  }
+
+  const table = `${accountid}_postactivation`;
+
+  const ALLOWED_SORT = new Set(["grade", "total_weight", "num_bags"]);
+  const sortRaw = String(req.query.sort || "grade");
+  const sort    = ALLOWED_SORT.has(sortRaw) ? sortRaw : "grade";
+  const dirRaw  = String(req.query.dir || "asc").toLowerCase();
+  const dirSql  = dirRaw === "desc" ? "DESC" : "ASC";
+
+  const sql = `
+    SELECT
+      grade,
+      SUM(bag_weight) AS total_weight,
+      COUNT(*)        AS num_bags
+    FROM ${table}
+    WHERE stock_status = ANY (
+      ARRAY[
+        'Quality',
+        'Screening',
+        'Crushing',
+        'De-Magnetize',
+        'De-Dusting',
+        'Blending',
+        'InStock'
+      ]::text[]
+    )
+    GROUP BY grade
+    ORDER BY ${sort} ${dirSql}
+  `;
+
+  try {
+    const { rows } = await pool.query(sql);
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="bags_in_stock_summary.csv"`);
+
+    const esc = (v) =>
+      v == null
+        ? ""
+        : /[",\n]/.test(String(v))
+        ? `"${String(v).replace(/"/g, '""')}"`
+        : String(v);
+
+    res.write("grade,total_weight,num_bags\n");
+    for (const r of rows) {
+      res.write(
+        [
+          esc(r.grade),
+          esc(r.total_weight),
+          esc(r.num_bags),
+        ].join(",") + "\n"
+      );
+    }
+    res.end();
+  } catch (err) {
+    console.error("GET /api/reports_postactivation/bags_in_stock_summary.csv error:", err);
+    return res.status(500).json({ error: "Internal server error" });
+  }
+});
 
 
 

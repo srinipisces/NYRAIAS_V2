@@ -16,6 +16,20 @@ import { AuthContext } from "../AuthContext";
 
 const API_URL = import.meta.env.VITE_API_URL;
 
+const redirectHome = () => {
+   window.location.href = '/';
+ };
+
+const authFetch = async (input, init) => {
+   const res = await fetch(input, init);
+   if (res.status === 401) {
+     redirectHome();
+     throw new Error('Unauthorized (401)');
+   }
+   return res;
+ };
+
+
 // ---- helpers ----
 const fmtDT = (s) => {
   if (!s) return "";
@@ -197,7 +211,7 @@ export default function InwardLab() {
     setLoading(true);
     setError("");
     try {
-      const res = await fetch(`${API_URL}/api/lab/inwardlabque`, {
+      const res = await authFetch(`${API_URL}/api/lab/inwardlabque`, {
         method: "GET",
         headers,
         credentials: "include",
@@ -230,7 +244,7 @@ export default function InwardLab() {
   const submitRow = async (payload) => {
     setSaving(true);
     try {
-      const res = await fetch(`${API_URL}/api/lab/inwardlabtest`, {
+      const res = await authFetch(`${API_URL}/api/lab/inwardlabtest`, {
         method: "POST",
         headers,
         credentials: "include",

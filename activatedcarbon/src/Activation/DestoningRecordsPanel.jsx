@@ -19,6 +19,7 @@ import FilterListIcon from '@mui/icons-material/FilterList';
 import DownloadIcon from '@mui/icons-material/Download';
 import DeleteOutlineIcon from '@mui/icons-material/DeleteOutline';
 import MoreVertIcon from '@mui/icons-material/MoreVert';
+import PrintLabelButton from '../QR/PrintLabel';
 
 const API = import.meta.env.VITE_API_URL;
 const PAGE_SIZE = 50;
@@ -336,6 +337,15 @@ export default function DestoningRecordsPanel({
                         </TableCell>
                       ))}
                       <TableCell sx={{ whiteSpace: 'nowrap' }}>
+                        {/* Print De-Stoner label */}
+                        {r.ds_bag_no && (
+                          <PrintLabelButton
+                            bag_no={r.ds_bag_no}     // <-- prints the ds_bag_no
+                            weight={r.weight_out}    // optional, if your label template shows weight
+                            heightIn={2.5}           // keep same label size as your other flows
+                            sx={{ mr: 1 }}           // optional spacing helper if your component accepts sx
+                          />
+                        )}
                         {canEdit && editMode && (
                           <>
                             <Button size="small" variant="contained" disabled={!changed} onClick={() => handleUpdate(r)} sx={{ mr: 1 }}>

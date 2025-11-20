@@ -92,9 +92,9 @@ router.get("/RawMaterialIncoming", authenticate, async (req, res) => {
              material_arrivaltime AS material_arrival_time,
              supplier_name,
              supplier_dc_number AS dc_number,
-             supplier_weight, our_weight, moisture, dust, ad_value,
-             lab_result AS lab_result_time,
-             admit_load
+             supplier_weight, our_weight,userid, moisture, dust, ad_value,
+             lab_result AS lab_result_time,lab_userid,
+             admit_load,remarks,audit_trail
       FROM ${table}
       ${whereSql}
       ORDER BY ${sortBy} ${sortDir}
@@ -372,9 +372,9 @@ router.get("/RawMaterialIncoming/download.csv", authenticate, async (req, res) =
              material_arrivaltime AS material_arrival_time,
              supplier_name,
              supplier_dc_number AS dc_number,
-             supplier_weight, our_weight, moisture, dust, ad_value,
-             lab_result AS lab_result_time,
-             admit_load
+             supplier_weight, our_weight, userid,moisture, dust, ad_value,
+             lab_result AS lab_result_time,lab_userid,
+             admit_load,remarks
       FROM ${table}
       ${whereSql}
       ORDER BY ${sortBy} ${sortDir}

@@ -64,6 +64,8 @@ pool.connect()
     app.use('/api/activation' ,require('./activation.js'));
     app.use('/api/reports_postactivation' ,require('./reports_postactivation.js'));
     app.use('/api/reports_activation' ,require('./reports_activation.js'));
+    app.use('/api/rms_reports' ,require('./rms_reports.js'));
+    app.use('/api/delivery' ,require('./delivery.js'));
     app.use('/api', require('./index'));
 
     app.listen(PORT, () => {

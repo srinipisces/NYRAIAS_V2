@@ -14,6 +14,7 @@ import axios from "axios";
 import LoadBagsMenu from "./LoadBagsMenu";
 import MovingBag from "./MovingBag";
 
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL,
   withCredentials: true,
@@ -28,6 +29,7 @@ export default function KilnTimeline({
   kiln = "Kiln A",
 }) {
   const API_URL = import.meta.env.VITE_API_URL;
+
 
   // ---------- layout ----------
   const m = { top: 8, right: 16, bottom: 8, left: 16 };
@@ -251,8 +253,12 @@ export default function KilnTimeline({
           >
             {todayTotals.bagCount} - {todayTotals.totalWeightKg.toFixed(2)} kg
           </Typography>
+         
 
-          <LoadBagsMenu onLoad={handleLoadSelected} />
+          {/* <LoadBagsMenu onLoad={handleLoadSelected} /> */}
+          <LoadBagsMenu 
+            onLoad={handleLoadSelected}  
+          />
         </Box>
 
         {/* Scrollable canvas */}
@@ -350,6 +356,7 @@ export default function KilnTimeline({
           </DialogActions>
         </Dialog>
       </Paper>
+      
     </Box>
   );
 }

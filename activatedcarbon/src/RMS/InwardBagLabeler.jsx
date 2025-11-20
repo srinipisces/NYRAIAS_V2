@@ -32,6 +32,7 @@ import {
   DialogActions,
 } from '@mui/material';
 import PrintLabelButton from '../QR/PrintLabel';
+import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -39,6 +40,7 @@ const TEXT_SX = { fontSize: 14, lineHeight: 1.2 };
 
 export default function InwardBagLabeler() {
   // inwards list + selection
+  const navigate = useNavigate();
   const [inwards, setInwards] = useState([]);
   const [loadingInwards, setLoadingInwards] = useState(false);
   const [selectedInwardNo, setSelectedInwardNo] = useState('');
@@ -62,6 +64,10 @@ export default function InwardBagLabeler() {
         const res = await fetch(`${API_URL}/api/materialinward/inwardnumber`, {
           credentials: 'include',
         });
+        if (res.status === 401) {
+          navigate('/', { replace: true });
+          return;
+        }
         if (!res.ok) {
           const t = await res.text();
           console.error('Inwards fetch failed', res.status, t);
@@ -117,6 +123,10 @@ export default function InwardBagLabeler() {
       const res = await fetch(`${API_URL}/api/materialinward/inwardnumber`, {
         credentials: 'include',
       });
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const json = await res.json();
       const list = normalizeInwardsPayload(json);
@@ -159,6 +169,10 @@ export default function InwardBagLabeler() {
           bag_weight: weight,
         }),
       });
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (!res.ok) {
         let msg = `Create failed (${res.status})`;
         try {
@@ -225,7 +239,10 @@ export default function InwardBagLabeler() {
           remark: finishRemark || '',
         }),
       });
-
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (res.status === 409) {
         // Already completed (noop)
         try { const j = await res.json(); alert(j?.message || 'Inward already completed.'); } catch { alert('Inward already completed.'); }

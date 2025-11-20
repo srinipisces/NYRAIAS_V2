@@ -17,8 +17,9 @@ const checkAccess= require('./checkaccess.js');
 //login
 router.post('/login', async (req, res) => {
   const { userid, password, accountid } = req.body;
-
+  console.log(userid,password,accountid);
   if (!userid || !password || !accountid) {
+
     return res.status(400).json({ message: 'Missing credentials' });
   }
 
@@ -27,10 +28,10 @@ router.post('/login', async (req, res) => {
   try {
     // 1. Validate credentials from the tenant's auth table
     const result = await pool.query(
-      `SELECT password, access FROM ${tableName} WHERE userid = $1 AND status = true`,
+      `SELECT password, access FROM ${tableName} WHERE upper(userid) = upper($1) AND status = true`,
       [userid]
     );
-
+    console.log(result,userid,password,accountid);
     if (result.rows.length === 0) {
       return res.status(401).json({ message: 'Invalid userid or password' });
     }
@@ -59,6 +60,7 @@ router.post('/login', async (req, res) => {
     const vertical = route.split('/').filter(Boolean)[0] || '';
 
     // 3. Generate JWT
+    
     const token = jwt.sign(
       {
         userid,
@@ -69,6 +71,8 @@ router.post('/login', async (req, res) => {
       JWT_SECRET,
       { expiresIn: '8h' }
     );
+    // delete any old logins..
+    await pool.query('DELETE FROM active_tokens WHERE userid = $1 and accountid = $2', [userid,accountid]);
 
     // 4. Store token in DB (for session tracking or invalidation)
     const expiresAt = new Date(Date.now() + 8 * 3600 * 1000); // 8 hours from now
@@ -348,7 +352,7 @@ router.post('/changepassword', authenticate,async (req, res) => {
 
   try {
     const result = await pool.query(
-      `SELECT password, activities FROM ${tableName} WHERE userid = $1`,
+      `SELECT password, activities FROM ${tableName} WHERE upper(userid) = upper($1)`,
       [userid]
     );
 

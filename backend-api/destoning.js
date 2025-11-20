@@ -287,16 +287,19 @@ router.post("/complete", authenticate, async (req, res) => {
 
     // Get max running number across all days (DSO_YYYYMMDD_###)
     const maxResult = await pool.query(
-      `SELECT MAX(CAST(SUBSTRING(ds_bag_no FROM 'DSO_\\d{8}_(\\d+)$') AS INTEGER)) AS max_no
-       FROM ${table}
-       WHERE ds_bag_no ~ 'DSO_\\d{8}_\\d+$'`
+      `SELECT COALESCE((
+        SELECT split_part(btrim(ds_bag_no), '_', 3)::int
+        FROM ${table}
+        ORDER BY bag_generated_timestamp DESC NULLS LAST
+        LIMIT 1
+      ), 0) AS max_no;`
     );
-
+    
     let nextNo = (maxResult.rows[0].max_no || 0);
     nextNo = (nextNo >= 999) ? 1 : nextNo + 1;
-
+    
     const newBagNo = `${prefix}${String(nextNo).padStart(3, '0')}`;
-
+    console.log("nextNo",nextNo,newBagNo,maxResult.rows[0].max_no);
     // Update the pending row with the new bag number
     await pool.query(
       `UPDATE ${table}

@@ -22,11 +22,13 @@ const authenticate = async (req, res, next) => {
 
     // ✅ Check token presence in DB
     const result = await pool.query(
-      'SELECT 1 FROM active_tokens WHERE token = $1 AND userid = $2 AND accountid = $3',
+      'SELECT 1 FROM active_tokens WHERE token = $1 AND upper(userid) = upper($2) AND accountid = $3',
       [token, userid, accountid]
     );
 
     if (result.rows.length === 0) {
+
+      
       res.clearCookie('token', {
         httpOnly: true,
         secure: true,

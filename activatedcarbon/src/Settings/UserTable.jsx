@@ -50,7 +50,7 @@ export default function UserTable({ users = [], onUserUpdated }) {
         const cfg = await res.json();
         if (!ignore && cfg && typeof cfg === 'object' && Object.keys(cfg).length) {
           setAccessConfig(cfg.menu_structure);
-          console.log(cfg.menu_structure);
+          //console.log(cfg.menu_structure);
         } else if (!ignore) {
           setAccessConfig(DEFAULT_ACCESS_PAGES);
         }
@@ -135,13 +135,14 @@ export default function UserTable({ users = [], onUserUpdated }) {
 
   const handleResetPassword = async (user) => {
     try {
-      const res = await fetch(`${API_URL}/api/users/reset-password/${accountid}/${user.userid}`, {
+      const res = await fetch(`${API_URL}/api/users/resetpassword/${accountid}/${user.userid}`, {
         method: 'POST',
         credentials: 'include',
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.message || 'Reset failed');
-      setResetDialog({ open: true, user, password: data?.password || '(generated)' });
+      //console.log(data?.newPassword,data);
+      setResetDialog({ open: true, user, password: data?.newPassword || '(generated)' });
     } catch (e) {
       showSnackbar(e.message || 'Server error during reset', 'error');
     }

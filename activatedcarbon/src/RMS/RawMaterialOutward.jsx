@@ -33,6 +33,7 @@ import {
 } from '@mui/material';
 import LocalPrintshopOutlinedIcon from '@mui/icons-material/LocalPrintshopOutlined';
 import PrintLabelButton from '../QR/PrintLabel';
+import { useNavigate } from 'react-router-dom';
 
 const API_URL = import.meta.env.VITE_API_URL;
 
@@ -56,6 +57,7 @@ const TEXT_SX = { fontSize: 14, lineHeight: 1.2 };
 
 export default function RawMaterialOutward() {
   // inwards list + selection
+  const navigate = useNavigate();
   const [inwards, setInwards] = useState([]);
   const [loadingInwards, setLoadingInwards] = useState(false);
   const [selectedInwardNo, setSelectedInwardNo] = useState('');
@@ -82,6 +84,10 @@ export default function RawMaterialOutward() {
       setLoadingInwards(true);
       try {
         const res = await fetch(`${API_URL}${ROUTES.fetchInwards}`, { credentials: 'include' });
+        if (res.status === 401) {
+          navigate('/', { replace: true });
+          return;
+        }
         if (!res.ok) {
           const t = await res.text();
           console.error('Inwards fetch failed', res.status, t);
@@ -136,6 +142,10 @@ export default function RawMaterialOutward() {
   async function reloadInwards(preserveSelection = true) {
     try {
       const res = await fetch(`${API_URL}${ROUTES.fetchInwards}`, { credentials: 'include' });
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
       const json = await res.json();
       const list = normalizeInwardsPayload(json);
@@ -183,7 +193,10 @@ export default function RawMaterialOutward() {
           bag_weight: weight,
         }),
       });
-
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (res.status === 409) {
         try {
           const j409 = await res.json();
@@ -263,6 +276,10 @@ export default function RawMaterialOutward() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inward_number: selected.inward_no, remark: finishRemark || '' }),
       });
+      if (res.status === 401) {
+        navigate('/', { replace: true });
+        return;
+      }
       if (!res.ok) {
         let msg = `Finish failed (${res.status})`;
         try {

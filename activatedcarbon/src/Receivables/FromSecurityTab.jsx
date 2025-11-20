@@ -8,6 +8,21 @@ export default function From_Security({ onSuccess }) {
   const { userid } = useContext(AuthContext);
   const formRef = useRef();
   const [submitting, setSubmitting] = useState(false);
+  const api = axios.create({
+      baseURL: import.meta.env.VITE_API_URL,
+      withCredentials: true,
+    });
+
+  api.interceptors.response.use(
+    (r) => r,
+    (err) => {
+      if (err?.response?.status === 401) {
+        window.location.href = '/';
+      }
+      return Promise.reject(err);
+    }
+  );
+
 
   const fields = [
     {
@@ -69,11 +84,12 @@ export default function From_Security({ onSuccess }) {
         // remarks will now be handled by backend as activities
       };
 
-      const response = await axios.post(
+      /* const response = await axios.post(
         import.meta.env.VITE_API_URL + '/api/materialatgate',
         payload,
         { withCredentials: true }
-      );
+      ); */
+      const response = await api.post('/api/materialatgate', payload);
 
       const { inward_number, message } = response.data;
       alert(message || `Success! Inward Number ${inward_number} created`);

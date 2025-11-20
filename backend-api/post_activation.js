@@ -1207,7 +1207,6 @@ router.post('/createlabel_cont', authenticate, async (req, res) => {
     if (!/^[a-z0-9_]+$/i.test(String(s || ''))) throw new Error('Invalid identifier');
     return s;
   };
-  
 
   try {
     const { accountid, userid } = req.user || {};
@@ -1217,7 +1216,8 @@ router.post('/createlabel_cont', authenticate, async (req, res) => {
     const tabName = String(req.query.tabName || '').trim(); // Screening / Crushing / De-Dusting / De-Magnetize / Blending
     if (!tabName) return res.status(400).json({ error: 'Missing tabName' });
 
-    const { weight, grade, bag_no } = req.body || {};
+    const { weight, grade, bag_no, machine } = req.body || {};
+
     // DO NOT allow bag_no from client (trigger must create it)
     if (bag_no) return res.status(400).json({ error: 'bag_no must not be provided (auto-generated)' });
 
@@ -1227,19 +1227,45 @@ router.post('/createlabel_cont', authenticate, async (req, res) => {
     const g = (grade ?? '').toString().trim();
     if (!g) return res.status(400).json({ error: 'grade is required' });
 
+    const isScreening = tabName === 'Screening';
+
+    // Validate machine ONLY for Screening
+    let m = null;
+    if (isScreening) {
+      const allowed = new Set(['GYRO', 'SHAKER']);
+      m = String(machine || '').trim();
+      if (!m) return res.status(400).json({ error: "machine is required for Screening (Gyro/Shaker)" });
+      if (!allowed.has(m.toUpperCase())) {
+        return res.status(400).json({ error: "Invalid machine. Must be 'Gyro' or 'Shaker'." });
+      }
+    }
+
     const postactTbl = `${safeIdent(accountid)}_postactivation`;
-    const loadedView = `${safeIdent(accountid)}_postactivation_loaded`;
+    const loadedView = `${safeIdent(accountid)}_postactivation_loaded`; // (kept if used elsewhere)
 
-    // Insert row; trigger generates bag_no. stock_status starts at 'Quality'.
-    const insertSql = `
-      INSERT INTO ${postactTbl}
-        (operations, bag_weight, grade, bag_no_created_dttm, bag_created_userid, stock_status)
-      VALUES
-        ($1, $2, $3, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), $4, 'Quality')
-      RETURNING bag_no, operations, grade, bag_weight, bag_no_created_dttm
-    `;
+    // --- INSERT (branch for Screening vs others) ---
+    let insertSql, params;
+    if (isScreening) {
+      insertSql = `
+        INSERT INTO ${postactTbl}
+          (operations, bag_weight, grade, bag_no_created_dttm, bag_created_userid, stock_status, machine)
+        VALUES
+          ($1, $2, $3, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), $4, 'Quality', $5)
+        RETURNING bag_no, operations, grade, bag_weight, bag_no_created_dttm, machine
+      `;
+      params = [tabName, w, g, userid || null, m];
+    } else {
+      insertSql = `
+        INSERT INTO ${postactTbl}
+          (operations, bag_weight, grade, bag_no_created_dttm, bag_created_userid, stock_status)
+        VALUES
+          ($1, $2, $3, (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Kolkata'), $4, 'Quality')
+        RETURNING bag_no, operations, grade, bag_weight, bag_no_created_dttm
+      `;
+      params = [tabName, w, g, userid || null];
+    }
 
-    const ins = await pool.query(insertSql, [tabName, w, g, userid || null]);
+    const ins = await pool.query(insertSql, params);
     const created = ins.rows?.[0];
     if (!created) {
       return res.status(500).json({ error: 'Failed to create label' });
@@ -1255,10 +1281,11 @@ router.post('/createlabel_cont', authenticate, async (req, res) => {
     });
 
   } catch (err) {
-    console.error(new Date().toISOString(), '/post_activation/create_label error:', err);
+    console.error(new Date().toISOString(), '/post_activation/createlabel_cont error:', err);
     return res.status(500).json({ error: 'Database error' });
   }
 });
+
 
 // GET /api/records_loaded?tabName=Blending_Loaded&bag_no=I-10&from=2025-10-01&to=2025-10-15&page=1&pageSize=50&sort=loaded_time&dir=desc
 router.get("/records_loaded", authenticate, async (req, res) => {
@@ -1480,6 +1507,124 @@ router.get("/records_loaded.csv", authenticate, async (req, res) => {
     res.status(500).json({ error: "Internal server error" });
   }
 });
+
+
+
+router.patch(
+  '/records_edit',
+  authenticate,
+  checkAccess('Operations.PostActivation.Edit'),
+  async (req, res) => {
+    const { accountid, userid } = req.user || {};
+    const { bag_no, bag_weight, stock_status } = req.body || {};
+
+    if (!bag_no) {
+      return res.status(400).json({ error: 'bag_no is required' });
+    }
+    if (stock_status && stock_status !== 'Quality') {
+      return res.status(400).json({ error: 'status can only be changed to "Quality"' });
+    }
+
+    const table = `${accountid}_postactivation`;
+
+    try {
+      await pool.query('BEGIN');
+
+      // Lock the row to prevent races
+      const sel = await pool.query(
+        `SELECT bag_no, bag_weight, stock_status, audit_trail
+           FROM ${table}
+          WHERE bag_no = $1
+          FOR UPDATE`,
+        [bag_no]
+      );
+      if (sel.rowCount === 0) {
+        await pool.query('ROLLBACK');
+        return res.status(404).json({ error: 'bag_no not found' });
+      }
+
+      const current = sel.rows[0];
+
+      // Block edits if *_Loaded
+      if (/_Loaded$/i.test(current.stock_status || '')) {
+        await pool.query('ROLLBACK');
+        return res.status(409).json({ error: 'Cannot edit when status is "*_Loaded"' });
+      }
+
+      // Build SETs and audit entries only for real changes
+      const sets = [];
+      const params = [];
+      let idx = 1;
+
+      // Collect audit entries here (plain JS objects)
+      const auditEntries = [];
+      const nowIso = new Date().toISOString(); // store as ISO; DB will keep as jsonb
+
+      // bag_weight update?
+      if (Number.isFinite(bag_weight) && Number(bag_weight) !== Number(current.bag_weight)) {
+        sets.push(`bag_weight = $${idx++}`);
+        params.push(Number(bag_weight));
+        auditEntries.push({
+          column: 'bag_weight',
+          upd_dt: nowIso,        // or compute in SQL (see note below)
+          userid,
+          new_value: Number(bag_weight),
+          old_value: Number(current.bag_weight),
+        });
+      }
+
+      // stock_status update? (only allow -> Quality)
+      if (stock_status && stock_status !== current.stock_status) {
+        sets.push(`stock_status = $${idx++}`);
+        params.push(stock_status);
+
+        // Optional “who/when” fields if you track them:
+        sets.push(`stock_status_change_dttime = CURRENT_TIMESTAMP`);
+        sets.push(`stock_change_userid = $${idx++}`);
+        params.push(userid);
+
+        auditEntries.push({
+          column: 'stock_status',
+          upd_dt: nowIso,
+          userid,
+          new_value: stock_status,
+          old_value: current.stock_status,
+        });
+      }
+
+      if (sets.length === 0) {
+        await pool.query('ROLLBACK');
+        return res.status(400).json({ error: 'Nothing to update' });
+      }
+
+      // Always append audit entries (if any)
+      if (auditEntries.length > 0) {
+        sets.push(`audit_trail = COALESCE(audit_trail, '[]'::jsonb) || $${idx++}::jsonb`);
+        params.push(JSON.stringify(auditEntries)); // node-pg sends as text; cast to jsonb in SQL
+      }
+
+      // WHERE param
+      params.push(bag_no);
+
+      const upd = await pool.query(
+        `UPDATE ${table}
+            SET ${sets.join(', ')}
+          WHERE bag_no = $${idx}
+        RETURNING bag_no, bag_weight, stock_status, audit_trail`,
+        params
+      );
+
+      await pool.query('COMMIT');
+      return res.json(upd.rows[0]);
+    } catch (e) {
+      await pool.query('ROLLBACK');
+      console.error('post_activation/stock patch error', e);
+      return res.status(500).json({ error: 'Server error' });
+    }
+  }
+);
+
+
 
 
 module.exports = router;

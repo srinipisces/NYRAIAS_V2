@@ -25,7 +25,7 @@ const lazyWithTabName = (importer, tabName) =>
 const InwardBagLabeler = lazyWithTabName(() => import("./InwardBagLabeler"), "raw_material_inward");
 const RawMaterialOutward = lazyWithTabName(() => import("./RawMaterialOutward"), "raw_material_outward");
 const CrusherPerformance = lazyWithTabName(() => import("./CrushPerfTab"), "crusher_performance");
-const LabTab = lazyWithTabName(() => import("./InwardLab"), "Lab");
+const ReportsTab = lazyWithTabName(() => import("./RMS_ReportsHub"), "Lab");
 const RecordsTab = lazyWithTabName(
   () => import("./Records"),
   "Records"
@@ -33,10 +33,11 @@ const RecordsTab = lazyWithTabName(
 
 // ------- registry of all possible tabs -------
 const TAB_ITEMS = [
-  { label: "Raw-Material Inward", key: "raw_material_inward", Component: InwardBagLabeler },
+  { label: "Raw-Material Inward", key: "raw-material_inward", Component: InwardBagLabeler },
   { label: "Crusher Performance", key: "crusher_performance", Component: CrusherPerformance },
   { label: "Raw-Material Outward", key: "raw-material_outward", Component: RawMaterialOutward },
   { label: "Records", key: "records", Component: RecordsTab },
+  { label: "Reports", key: "reports", Component: ReportsTab },
 ];
 
 // ------- helper: access check (Operations.Receivables.<Label>) -------

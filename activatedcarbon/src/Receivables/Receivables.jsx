@@ -28,12 +28,17 @@ const RecordsTab = lazyWithTabName(
   () => import("./Receivables_Records"),
   "Records"
 );
+const ReportsTab = lazyWithTabName(
+  () => import("./Reports"),
+  "Reports"
+);
 
 // ------- registry of all possible tabs -------
 const TAB_ITEMS = [
   { label: "Security", key: "security", Component: SecurityTab },
   { label: "Lab", key: "lab", Component: LabTab },
   { label: "Records", key: "records", Component: RecordsTab },
+  { label: "Reports", key: "reports", Component: ReportsTab },
 ];
 
 // ------- helper: access check (Operations.Receivables.<Label>) -------

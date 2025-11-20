@@ -166,8 +166,8 @@ router.get("/kilnstock_destoned", authenticate,async(req,res) => {
 router.get("/gradeinstock", authenticate,async(req,res) => {
   try {
     const {accountid} = req.user;
-    const table = `${accountid}_screening_outward`
-    const que = `select grade,sum(weight) as weight from ${table} where delivery_status = 'InStock' group by grade; `
+    const table = `${accountid}_postactivation`
+    const que = `select grade,sum(bag_weight) as weight from ${table} where stock_status = ANY (ARRAY['Quality'::text, 'Screening'::text,'Crushing'::text,'De-Magnetize'::text,'De-Dusting'::text,'Blending'::text,'InStock'::text]) group by grade; `
     const result = await pool.query(que);
 
     const RawData = result.rows
@@ -204,7 +204,7 @@ function groupBySupplierAndInwardWeight(rawData) {
 
 router.get("/stages", authenticate, async (req, res) => {
   const { accountid } = req.user;
-  const view = `${accountid}_dashboard_stages_summary_view`;
+  const view = `${accountid}_dashboard_stages_summary_v2`;
 
   try {
     const result = await pool.query(`SELECT * FROM ${view} LIMIT 1`);
@@ -216,7 +216,6 @@ router.get("/stages", authenticate, async (req, res) => {
       { label: "Exkiln With Stone", value: `${row.exkiln_with_stone_stock} kg`},
       { label: "Exkiln Without Stone", value: `${row.exkiln_without_stone_stock} kg` },
       { label: "Final Grade Stock", value: `${row.final_grade_stock} kg` },
-      { label: "Re-Processing", value: `${row.re_processing} kg` },
     ];
 
     res.json({ stages: formattedStages });

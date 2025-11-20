@@ -38,8 +38,10 @@ const LoginPage = () => {
 
   const handleLogin = async () => {
     try {
-      const [userid, accountid] = username.split('@');
-
+      const [userid, accountid] = username.toLowerCase().split('@');
+      //const userid = userid_temp.trim().toUpperCase();
+      //const accountid = accountid_temp.trim().toLowerCase();
+      
       if (!userid || !accountid) {
         setError('Username format should be userid@accountid');
         return;

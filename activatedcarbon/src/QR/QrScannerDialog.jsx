@@ -1,5 +1,5 @@
 // src/PostActivation/QrScannerDialog.jsx
-import React from "react";
+import React,{useEffect} from "react";
 import { Dialog, DialogContent } from "@mui/material";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
@@ -11,7 +11,21 @@ import { BarcodeFormat, DecodeHintType } from "@zxing/library";
  *  - onDetected  : (text: string) => void
  *  - closeOnScan : boolean (default: true) — auto-close after ANY detection
  */
-export default function QrScannerDialog({ open, onClose, onDetected, closeOnScan = true }) {
+export default function QrScannerDialog({ open, onClose, onDetected, closeOnScan = true,
+  closeOnBackdrop = true,         // keep normal behavior
+  closeOnEscape = true,           // keep normal behavior
+  ignoreBackdropOnMount = true,   // <-- key: prevents the mount flicker
+ }) {
+    const armedRef = React.useRef(false);
+    React.useEffect(() => {
+      if (open) {
+        armedRef.current = false;
+        const t = setTimeout(() => { armedRef.current = true; }, 150);
+        return () => clearTimeout(t);
+      } else {
+        armedRef.current = false;
+      }
+    }, [open]);
   const videoRef = React.useRef(null);
   const canvasRef = React.useRef(null);
 
@@ -135,7 +149,23 @@ export default function QrScannerDialog({ open, onClose, onDetected, closeOnScan
   }, [open, closeOnScan, onClose, onDetected, stopAll]);
 
   return (
-    <Dialog open={open} onClose={() => { stopAll(); onClose?.(); }} fullWidth maxWidth="xs">
+     <Dialog
+       open={open}
+       onClose={(_e, reason) => {
+         if (reason === 'backdropClick') {
+           if (ignoreBackdropOnMount && !armedRef.current) return; // ignore initial click-away
+           if (!closeOnBackdrop) return;
+         }
+         if (reason === 'escapeKeyDown' && !closeOnEscape) return;
+         stopAll();
+         onClose?.();
+       }}
+       keepMounted
+       disableRestoreFocus
+       disableAutoFocus
+       fullWidth
+       maxWidth="xs"
+     >
       <DialogContent sx={{ p: 0 }}>
         <video ref={videoRef} autoPlay muted playsInline style={{ width: "100%", display: "block", borderRadius: 8 }} />
         <canvas ref={canvasRef} style={{ display: "none" }} />

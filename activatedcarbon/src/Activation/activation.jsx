@@ -40,11 +40,11 @@ const TAB_ITEMS = [
   { label: "Kiln Feed Quality", key: "kiln_feed_quality", Component: KilnFeedQuality },
   { label: "Kiln Feed", key: "kiln_feed", Component: kilnfeed },
   { label: "Kiln Output Quality", key: "kiln_output_quality", Component: KilnOutputQuality },
-  { label: "Kiln Temperature", key: "raw-kiln_temp", Component: KilnTemp },
+  { label: "Kiln Temperature", key: "kiln_temperature", Component: KilnTemp },
   { label: "De-Stoning", key: "de-stoning", Component: DeStoning },
-  { label: "De-Stoning Quality", key: "kiln_output_quality", Component: DeStoningQuality },
+  { label: "De-Stoning Quality", key: "de-stoning_quality", Component: DeStoningQuality },
   { label: "Records", key: "records", Component: RecordsTab },
-  { label: "Reports", key: "records", Component: Reports },
+  { label: "Reports", key: "reports", Component: Reports },
 ];
 
 // ------- helper: access check (Operations.Receivables.<Label>) -------

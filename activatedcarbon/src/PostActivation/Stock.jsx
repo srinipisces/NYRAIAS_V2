@@ -1,4 +1,4 @@
-// Stock.jsx — Filters + Download + Pagination + Per‑row Quality/Remarks
+// Stock.jsx — Filters + Download + Pagination + Per-row Quality/Remarks + Edit (weight/status)
 // Plain JS (no sx), MUI v7 compatible
 
 import * as React from "react";
@@ -11,6 +11,8 @@ import {
 } from "@mui/material";
 import AddRoundedIcon from "@mui/icons-material/AddRounded";
 import RemoveRoundedIcon from "@mui/icons-material/RemoveRounded";
+import PrintLabelButton from '../QR/PrintLabel';
+import { useAuth } from "../AuthContext"; // <-- ADDED
 
 const API = import.meta.env.VITE_API_URL;
 
@@ -124,13 +126,31 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
     draft: { bag_no: "", status: "", created_from: "", created_to: "" },
   });
 
+  // ---- Access control for Edit button
+  const authCtx = typeof useAuth === "function" ? useAuth() : null;
+  const accessArr = Array.isArray(authCtx?.access) ? authCtx.access : [];
+  const canEditActivation = accessArr.includes("Operations.PostActivation.Edit");
+  console.log(accessArr);
+  const isLoadedLike = (status) => /_Loaded$/i.test(String(status || ""));
+
+  // ---- Edit dialog state
+  const [editDlg, setEditDlg] = React.useState({
+    open: false,
+    panelKey: null,
+    row: null,
+    weight: "",
+    status: "",
+    saving: false,
+    error: null,
+  });
+
   const PAGE_SIZE = 50;
   const headerPx = 38;
   const viewportPx = headerPx + visibleRows * rowPx;
 
   const hasActiveFilter = (f) => !!(f && (f.bag_no || f.status || f.created_from || f.created_to));
 
-  // Prefetch metrics map once
+  // Prefetch metrics map once (quality metrics only)
   React.useEffect(() => {
     let alive = true;
     (async () => {
@@ -143,7 +163,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
         const payload = await resp.json();
         const map = normalizeMetricsMap(payload?.data || payload?.metrics || {});
         if (alive) setMetricsByGrade(map);
-        
       } catch (e) {
         // non-fatal; fallback to row.quality
         console.error("metrics fetch error", e);
@@ -237,55 +256,121 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
   async function handleClearFilter(panel) {
     const key = panel.key;
     setFilters((s) => ({ ...s, [key]: {} }));
-    //await fetchPage(panel, 1, { replace: true });
     setPageState((s) => ({ ...s, [key]: { page: 0, pageSize: PAGE_SIZE, total: null, hasMore: true } }));
     await fetchPage(panel, 1, { replace: true, filtersOverride: {} });
   }
 
-   async function handleDownload(panel) {
-     const key = panel.key;
-     const f = filters[key] || {};
-     const url = new URL(`${API}/api/post_activation/records/download`);
-     url.searchParams.set("key", key);
-     if (f.bag_no)       url.searchParams.set("bag_no", f.bag_no);
-     if (f.status)       url.searchParams.set("status", f.status);
-     if (f.created_from) url.searchParams.set("created_from", f.created_from);
-     if (f.created_to)   url.searchParams.set("created_to", f.created_to);
+  async function handleDownload(panel) {
+    const key = panel.key;
+    const f = filters[key] || {};
+    const url = new URL(`${API}/api/post_activation/records/download`);
+    url.searchParams.set("key", key);
+    if (f.bag_no)       url.searchParams.set("bag_no", f.bag_no);
+    if (f.status)       url.searchParams.set("status", f.status);
+    if (f.created_from) url.searchParams.set("created_from", f.created_from);
+    if (f.created_to)   url.searchParams.set("created_to", f.created_to);
 
-     setDownloading((s) => ({ ...s, [key]: true }));
-     try {
-       const resp = await fetch(url.toString(), { credentials: "include" });
-       if (!resp.ok) {
-         const text = await resp.text().catch(() => "");
-         throw new Error(`Download failed (${resp.status}) ${text}`);
-       }
-       const blob = await resp.blob();
-       // Try to honor server filename if provided
-       let filename = `${key}_records.csv`;
-       const cd = resp.headers.get("Content-Disposition");
-       if (cd) {
-         // filename*= or filename=  (basic parse)
-         const mStar = /filename\\*=(?:UTF-8''|)([^;]+)/i.exec(cd);
-         const m = mStar || /filename=\"?([^\";]+)\"?/i.exec(cd);
-         if (m && m[1]) {
-           try { filename = decodeURIComponent(m[1].trim()); } catch { filename = m[1].trim(); }
-         }
-       }
-       const href = URL.createObjectURL(blob);
-       const a = document.createElement("a");
-       a.href = href;
-       a.download = filename;
-       document.body.appendChild(a);
-       a.click();
-       a.remove();
-       URL.revokeObjectURL(href);
-     } catch (e) {
-       console.error("download error", e);
-       alert(`Download failed: ${e?.message || "Unknown error"}`);
-     } finally {
-       setDownloading((s) => ({ ...s, [key]: false }));
-     }
-   }
+    setDownloading((s) => ({ ...s, [key]: true }));
+    try {
+      const resp = await fetch(url.toString(), { credentials: "include" });
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => "");
+        throw new Error(`Download failed (${resp.status}) ${text}`);
+      }
+      const blob = await resp.blob();
+      let filename = `${key}_records.csv`;
+      const cd = resp.headers.get("Content-Disposition");
+      if (cd) {
+        const mStar = /filename\*=(?:UTF-8''|)([^;]+)/i.exec(cd);
+        const m = mStar || /filename=\"?([^\";]+)\"?/i.exec(cd);
+        if (m && m[1]) {
+          try { filename = decodeURIComponent(m[1].trim()); } catch { filename = m[1].trim(); }
+        }
+      }
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } catch (e) {
+      console.error("download error", e);
+      alert(`Download failed: ${e?.message || "Unknown error"}`);
+    } finally {
+      setDownloading((s) => ({ ...s, [key]: false }));
+    }
+  }
+
+  // ---------- EDIT: open/save ----------
+  function openEdit(panelKey, row) {
+    const currentStatus = row?.stock_status ?? row?.status ?? "";
+    if (isLoadedLike(currentStatus)) {
+      alert('Cannot edit when status is "*_Loaded"');
+      return;
+    }
+    setEditDlg({
+      open: true,
+      panelKey,
+      row,
+      weight: String(row?.bag_weight ?? row?.weight ?? row?.weight_out ?? ""),
+      status: String(currentStatus || ""),
+      saving: false,
+      error: null,
+    });
+  }
+
+  async function saveEdit() {
+    const { panelKey, row, weight, status } = editDlg || {};
+    const bag_no = row?.bag_no;
+    if (!bag_no) {
+      setEditDlg(s => ({ ...s, error: "Missing bag_no on row" }));
+      return;
+    }
+
+    const payload = { bag_no };
+    const numericWeight = Number(weight);
+    if (Number.isFinite(numericWeight)) payload.bag_weight = numericWeight;
+
+    const currStatus = row?.stock_status ?? row?.status ?? "";
+    if (status && status !== currStatus) payload.stock_status = status;
+
+    setEditDlg(s => ({ ...s, saving: true, error: null }));
+    try {
+      const resp = await fetch(`${API}/api/post_activation/records_edit`, {
+        method: "PATCH",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+      if (!resp.ok) {
+        const t = await resp.text().catch(() => "");
+        throw new Error(t || `Save failed (${resp.status})`);
+      }
+      const updated = await resp.json();
+
+      // Update the edited row in-place inside the active panel
+      setData(s => {
+        const d = s?.[panelKey];
+        if (!d) return s;
+        const newRows = (d.rows || []).map(r => {
+          if (r?.bag_no !== bag_no) return r;
+          return {
+            ...r,
+            bag_weight: updated?.bag_weight ?? r.bag_weight,
+            stock_status: updated?.stock_status ?? r.stock_status,
+            status: updated?.stock_status ?? r.status,
+          };
+        });
+        return { ...s, [panelKey]: { ...d, rows: newRows } };
+      });
+
+      setEditDlg(s => ({ ...s, open: false, saving: false }));
+    } catch (e) {
+      setEditDlg(s => ({ ...s, saving: false, error: e?.message || "Update failed" }));
+    }
+  }
 
   const renderTable = (key, label) => {
     if (loading && loading[key]) {
@@ -317,9 +402,9 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
       );
     }
 
-    // Move 'quality' to the last-but-one column and ensure a trailing 'remarks' column
+    // Move 'quality' to the last-but-one column and ensure a trailing 'remarks' column and then 'actions'
     const baseCols = cols.filter((c) => c !== "quality" && c !== "remarks");
-    const headerCols = [...baseCols, "quality", "remarks"];
+    const headerCols = [...baseCols, "quality", "remarks", "actions"];
 
     function toKeyValueString(val) {
       if (typeof val === "string") {
@@ -355,21 +440,20 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
     const f = filters[key] || {};
     const filterOn = hasActiveFilter(f);
     const STATUS_OPTIONS = [
-        "Screening",
-        "Screening_Loaded",
-        "Blending",
-        "Blending_Loaded",
-        "De-Dusting",
-        "De-Dusting_Loaded",
-        "De-Magnetize",
-        "De-Magnetize_Loaded",
-        "Crushing",
-        "Crushing_Loaded",
-        "InStock",
-        "Quality"
-      ];
+      "Screening",
+      "Screening_Loaded",
+      "Blending",
+      "Blending_Loaded",
+      "De-Dusting",
+      "De-Dusting_Loaded",
+      "De-Magnetize",
+      "De-Magnetize_Loaded",
+      "Crushing",
+      "Crushing_Loaded",
+      "InStock",
+      "Quality"
+    ];
 
-   
     return (
       <div>
         {/* toolbar: filter chip + buttons */}
@@ -388,13 +472,13 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <Button size="small" onClick={() => openFilter(panel)}>Filter</Button>
-             <Button
-               size="small"
-               disabled={!!downloading[key]}
-               onClick={() => handleDownload(panel)}
-             >
-               {downloading[key] ? "Downloading…" : "Download"}
-             </Button>
+            <Button
+              size="small"
+              disabled={!!downloading[key]}
+              onClick={() => handleDownload(panel)}
+            >
+              {downloading[key] ? "Downloading…" : "Download"}
+            </Button>
           </div>
         </div>
 
@@ -420,6 +504,8 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                 rows.map((row, idx) => {
                   const qKeys = getRowQualityKeys(row, metricsByGrade);
                   const remarks = getRowRemarks(row);
+                  const weightVal = row?.bag_weight ?? row?.weight ?? row?.weight_out ?? undefined;
+                  const statusVal = row?.stock_status ?? row?.status ?? "";
                   return (
                     <TableRow key={idx}>
                       {baseCols.map((c) => (
@@ -459,6 +545,28 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                       {/* Remarks (last) */}
                       <TableCell key="remarks" style={{ paddingTop: 6, paddingBottom: 6, fontSize: 13 }}>
                         {toKeyValueString(remarks)}
+                      </TableCell>
+
+                      {/* Actions */}
+                      <TableCell key="actions" style={{ paddingTop: 6, paddingBottom: 6, fontSize: 13, whiteSpace: "nowrap" }}>
+                        {row?.bag_no && (
+                          <PrintLabelButton
+                            bag_no={row.bag_no}
+                            weight={weightVal}
+                            heightIn={2.5}
+                          />
+                        )}
+                        {canEditActivation && (
+                          <Button
+                            size="small"
+                            variant="outlined"
+                            onClick={() => openEdit(key, row)}
+                            disabled={isLoadedLike(statusVal)}
+                            style={{ marginLeft: 8 }}
+                          >
+                            Edit
+                          </Button>
+                        )}
                       </TableCell>
                     </TableRow>
                   );
@@ -505,7 +613,14 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
                   onChange={(e) => setFilterDialog(s => ({ ...s, draft: { ...s.draft, status: e.target.value } }))}
                 >
                   <MenuItem value="">{/* empty = any */}</MenuItem>
-                  {STATUS_OPTIONS.map((st) => (
+                  {[
+                    "Screening","Screening_Loaded",
+                    "Blending","Blending_Loaded",
+                    "De-Dusting","De-Dusting_Loaded",
+                    "De-Magnetize","De-Magnetize_Loaded",
+                    "Crushing","Crushing_Loaded",
+                    "InStock","Quality"
+                  ].map((st) => (
                     <MenuItem key={st} value={st}>{st}</MenuItem>
                   ))}
                 </Select>
@@ -533,7 +648,6 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
               Cancel
             </Button>
             <Button color="warning" onClick={() => {
-              // Only clear the *draft* inputs; user will press Apply to commit
               setFilterDialog(s => ({ ...s, draft: { bag_no: "", status: "", created_from: "", created_to: "" } }));
             }}>
               Clear
@@ -589,6 +703,61 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
       ) : (
         <Alert severity="info">No panels configured.</Alert>
       )}
+
+      {/* ---- Edit Dialog (global, tied to selected panel/row) ---- */}
+      <Dialog
+        open={editDlg.open}
+        onClose={() => setEditDlg(s => ({ ...s, open: false }))}
+        fullWidth
+        maxWidth="xs"
+      >
+        <DialogTitle>
+          Edit — {editDlg.row?.bag_no || ""}{" "}
+          <span style={{ marginLeft: 8, color: "rgba(0,0,0,0.6)", fontSize: 12 }}>
+            {editDlg.row?.grade || ""}
+          </span>
+        </DialogTitle>
+        <DialogContent dividers>
+          <div style={{ display: "grid", gap: 12 }}>
+            <TextField
+              label="Weight"
+              type="number"
+              size="small"
+              value={editDlg.weight}
+              onChange={(e) => setEditDlg(s => ({ ...s, weight: e.target.value }))}
+              inputProps={{ step: "0.01" }}
+            />
+            <FormControl size="small">
+              <InputLabel>Status</InputLabel>
+              <Select
+                label="Status"
+                value={editDlg.status}
+                onChange={(e) => setEditDlg(s => ({ ...s, status: e.target.value }))}
+              >
+                <MenuItem value={String(editDlg.row?.stock_status ?? editDlg.row?.status ?? "")}>
+                  {String(editDlg.row?.stock_status ?? editDlg.row?.status ?? "") || "(empty)"}
+                </MenuItem>
+                <MenuItem value="Quality">Quality</MenuItem>
+              </Select>
+            </FormControl>
+
+            {isLoadedLike(editDlg.row?.stock_status ?? editDlg.row?.status) && (
+              <Alert severity="warning">This item is in a “*_Loaded” status and cannot be edited.</Alert>
+            )}
+            {editDlg.error && <Alert severity="error">{editDlg.error}</Alert>}
+          </div>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setEditDlg(s => ({ ...s, open: false }))}>Cancel</Button>
+          <Button
+            variant="contained"
+            onClick={saveEdit}
+            disabled={editDlg.saving || isLoadedLike(editDlg.row?.stock_status ?? editDlg.row?.status)}
+          >
+            {editDlg.saving ? "Saving…" : "Save"}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   );
 }

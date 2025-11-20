@@ -2,7 +2,8 @@
 import * as React from "react";
 import {
   Box, Paper, Stack, Button, TextField, MenuItem, Typography, Chip,
-  Divider, IconButton, Tooltip, CircularProgress, useMediaQuery, Menu
+  Divider, IconButton, Tooltip, CircularProgress, useMediaQuery, Menu,
+  Dialog,DialogTitle,DialogContent,DialogActions
 } from "@mui/material";
 import { useTheme } from "@mui/material/styles";
 import FilterAltIcon from "@mui/icons-material/FilterAlt";
@@ -20,7 +21,7 @@ import {
 } from "@mui/material";
 
 import { useAuth } from "../AuthContext";
-
+import HistoryIcon from "@mui/icons-material/History";
 const API_URL = import.meta.env.VITE_API_URL;           // e.g. https://nyraias.com
 const BASE = `${API_URL}/api/receivables`;              // keep your path
 
@@ -46,8 +47,24 @@ const COL_WIDTH = {
   ad_value: 120,
   lab_result_time: 220,
   admit_load: 140,
-  __actions: 130,
+  __actions: 180,
 };
+
+const redirectHome = () => {
+  // keep this simple so it works even outside react-router
+  window.location.href = "/";
+};
+
+const authFetch = async (input, init) => {
+  const resp = await fetch(input, init);
+  if (resp.status === 401) {
+    redirectHome();
+    // Stop further handling in the caller
+    throw new Error("Unauthorized (401)");
+  }
+  return resp;
+};
+
 
 export default function Receivables_Records() {
   const { access } = useAuth();
@@ -66,6 +83,43 @@ export default function Receivables_Records() {
   const [totalAll, setTotalAll] = React.useState(0);// all records
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
+
+  //AuditDialog
+  const [auditRow, setAuditRow] = React.useState(null);   // current row whose audit we're viewing
+  const [auditOpen, setAuditOpen] = React.useState(false);
+
+  const openAuditDialog = (row) => {
+    const raw = row?.audit_trail;
+    const hasAudit = Array.isArray(raw) ? raw.length > 0 : !!raw;
+    if (!hasAudit) return;
+    setAuditRow(row);
+    setAuditOpen(true);
+  };
+
+  const closeAuditDialog = () => {
+    setAuditOpen(false);
+    setAuditRow(null);
+  };
+
+  const auditText = React.useMemo(() => {
+    if (!auditRow) return "No audit records.";
+    const raw = auditRow.audit_trail;
+    if (!raw) return "No audit records.";
+
+    try {
+      if (typeof raw === "string") {
+        // backend might already send stringified JSON
+        const parsed = JSON.parse(raw);
+        return JSON.stringify(parsed, null, 2);
+      }
+      // JSON/JSONB array or object
+      return JSON.stringify(raw, null, 2);
+    } catch (err) {
+      // fall back: show as-is
+      return typeof raw === "string" ? raw : JSON.stringify(raw);
+    }
+  }, [auditRow]);
+
 
   // server pagination (50/page)
   const [page, setPage] = React.useState(0);
@@ -138,7 +192,7 @@ export default function Receivables_Records() {
     const ctrl = new AbortController();
     try {
       const qs = buildGridQuery();
-      const resp = await fetch(`${BASE}/RawMaterialIncoming?${qs}`, {
+      const resp = await authFetch(`${BASE}/RawMaterialIncoming?${qs}`, {
         credentials: "include",
         signal: ctrl.signal,
       });
@@ -153,7 +207,9 @@ export default function Receivables_Records() {
         ...r,
       }));
 
-      const serverCols = (data.columns || []).map((c) => ({
+      const serverCols = (data.columns || [])
+      .filter((c) => c.field !== "audit_trail")
+      .map((c) => ({
         field: c.field,
         headerName:
           c.headerName ||
@@ -162,9 +218,12 @@ export default function Receivables_Records() {
 
       // actions column only in Edit mode for editors
       const finalCols =
-        canEdit && editMode
-          ? [...serverCols, { field: "__actions", headerName: "" }]
-          : serverCols;
+      canEdit && editMode
+        ? [
+            ...serverCols,
+            { field: "__actions", headerName: "" },
+          ]
+        : serverCols;
 
       setColumns(finalCols);
       setRows(keyedRows);
@@ -208,12 +267,31 @@ export default function Receivables_Records() {
   };
 
   const handleDownloadCsv = () => {
-    const qs = buildDownloadQuery();
-    const url = `${BASE}/RawMaterialIncoming/download.csv${qs ? `?${qs}` : ""}`;
-    const a = document.createElement("a");
-    a.href = url; a.download = "";
-    document.body.appendChild(a); a.click(); a.remove();
-    closeMenu();
+ 
+      const qs = buildDownloadQuery();
+      const url = `${BASE}/RawMaterialIncoming/download.csv${qs ? `?${qs}` : ""}`;
+      (async () => {
+         try {
+           const resp = await authFetch(url, { credentials: "include" });
+           if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+           const blob = await resp.blob();
+           const dlUrl = URL.createObjectURL(blob);
+           const a = document.createElement("a");
+           a.href = dlUrl;
+           a.download = "RawMaterialIncoming.csv";
+           document.body.appendChild(a);
+           a.click();
+           a.remove();
+           URL.revokeObjectURL(dlUrl);
+          } catch (e) {
+            // if 401, authFetch already redirected; otherwise show a gentle error
+            if (String(e?.message || "").includes("Unauthorized")) return;
+            console.error(e);
+            setError("Failed to download CSV.");
+          } finally {
+            closeMenu();
+          }
+       })();
   };
 
   // edit mode + cancel drafts
@@ -256,7 +334,7 @@ export default function Receivables_Records() {
       if ("ad_value" in d) payload.ad_value = d.ad_value ?? null;
       if ("admit_load" in d) payload.admit_load = d.admit_load ?? null;
 
-      const resp = await fetch(
+      const resp = await authFetch(
         `${BASE}/RawMaterialIncoming/${encodeURIComponent(row.inward_number)}`,
         {
           method: "PATCH",
@@ -283,9 +361,12 @@ export default function Receivables_Records() {
   const toggleSort = (field) => {
     if (field === "__actions") return;
     if (sortBy !== field) {
-      setSortBy(field); setSortDir("ASC"); setPage(0);
+      setSortBy(field);
+      setSortDir("ASC");
+      setPage(0);
     } else {
-      setSortDir((d) => (d === "ASC" ? "DESC" : "ASC")); setPage(0);
+      setSortDir((d) => (d === "ASC" ? "DESC" : "ASC"));
+      setPage(0);
     }
   };
 
@@ -296,33 +377,56 @@ export default function Receivables_Records() {
 
   const renderCell = (row, col) => {
     const field = col.field;
-    const value = (drafts[row.id]?.[field] ?? row[field]);
+    const rawValue = drafts[row.id]?.[field] ?? row[field];  // <-- use rawValue
     const width = COL_WIDTH[field] ?? 140;
 
     // READ-ONLY when not in edit mode (even if user can edit)
     if (!(canEdit && editMode) || !EDITABLE_FIELDS.has(field)) {
+      let display = rawValue;
+
+      // 🔒 IMPORTANT: never render objects/arrays directly
+      if (display != null && typeof display === "object") {
+        try {
+          display = JSON.stringify(display);
+        } catch {
+          display = String(display);
+        }
+      }
+
       return (
         <Typography noWrap sx={{ fontSize: 13, width }}>
-          {value ?? ""}
+          {display ?? ""}
         </Typography>
       );
     }
 
+    // EDIT MODE for editable fields
     const commonProps = {
       size: "small",
       fullWidth: true,
-      inputProps: { style: { fontSize: 13 }, inputMode: "decimal", step: "any" },
+      inputProps: {
+        style: { fontSize: 13 },
+        inputMode: "decimal",
+        step: "any",
+      },
     };
 
-    if (["supplier_weight","our_weight","moisture","dust","ad_value"].includes(field)) {
-      const extra = ["moisture","dust"].includes(field)
-        ? { inputProps: { ...commonProps.inputProps, min:0, max:100 } }
+    if (["supplier_weight", "our_weight", "moisture", "dust", "ad_value"].includes(field)) {
+      const extra = ["moisture", "dust"].includes(field)
+        ? { inputProps: { ...commonProps.inputProps, min: 0, max: 100 } }
         : {};
+
       return (
         <TextField
           type="number"
-          value={value ?? ""}
-          onChange={(e) => onEditChange(row.id, field, e.target.value === "" ? null : Number(e.target.value))}
+          value={rawValue ?? ""}
+          onChange={(e) =>
+            onEditChange(
+              row.id,
+              field,
+              e.target.value === "" ? null : Number(e.target.value)
+            )
+          }
           {...commonProps}
           {...extra}
         />
@@ -333,7 +437,7 @@ export default function Receivables_Records() {
       return (
         <TextField
           select
-          value={value ?? ""}
+          value={rawValue ?? ""}
           onChange={(e) => onEditChange(row.id, field, e.target.value || null)}
           {...commonProps}
         >
@@ -346,12 +450,13 @@ export default function Receivables_Records() {
 
     return (
       <TextField
-        value={value ?? ""}
+        value={rawValue ?? ""}
         onChange={(e) => onEditChange(row.id, field, e.target.value)}
         {...commonProps}
       />
     );
   };
+
 
   const rowIsDirty = (row) => !!drafts[row.id] && Object.keys(drafts[row.id]).length > 0;
 
@@ -617,34 +722,62 @@ export default function Receivables_Records() {
                 ) : (
                   rows.map((row) => (
                     <TableRow key={row.id}>
-                      {columns.map((c) =>
-                        c.field === "__actions" ? (
-                          <TableCell key="__actions" sx={{ minWidth: COL_WIDTH.__actions, width: COL_WIDTH.__actions }}>
-                            {canEdit && editMode && (
-                              <Tooltip title={rowIsDirty(row) ? "Save changes" : "No changes"}>
-                                <span>
-                                  <Button
-                                    size="small"
-                                    variant="contained"
-                                    startIcon={<SaveRounded />}
-                                    onClick={() => saveRow(row)}
-                                    disabled={!rowIsDirty(row)}
-                                    aria-label={`Save changes for row ${row.inward_number}`}
-                                  >
-                                    Save
-                                  </Button>
-                                </span>
-                              </Tooltip>
-                            )}
-                          </TableCell>
-                        ) : (
-                          <TableCell key={c.field} sx={{ minWidth: COL_WIDTH[c.field] ?? 140, width: COL_WIDTH[c.field] ?? 140 }}>
+                      {columns.map((c) => {
+                        if (c.field === "__actions") {
+                          const raw = row.audit_trail;
+                          const hasAudit = Array.isArray(raw) ? raw.length > 0 : !!raw;
+                          return (
+                            <TableCell
+                              key="__actions"
+                              sx={{ minWidth: COL_WIDTH.__actions, width: COL_WIDTH.__actions }}
+                            >
+                              {canEdit && editMode && (
+                                <Stack direction="row" spacing={0.5} alignItems="center">
+                                  <Tooltip title={rowIsDirty(row) ? "Save changes" : "No changes"}>
+                                    <span>
+                                      <Button
+                                        size="small"
+                                        variant="contained"
+                                        startIcon={<SaveRounded />}
+                                        onClick={() => saveRow(row)}
+                                        disabled={!rowIsDirty(row)}
+                                        aria-label={`Save changes for row ${row.inward_number}`}
+                                      >
+                                        Save
+                                      </Button>
+                                    </span>
+                                  </Tooltip>
+
+                                  <Tooltip title={hasAudit ? "View audit trail" : "No audit records"}>
+                                    <span>
+                                      <IconButton
+                                        size="small"
+                                        onClick={() => openAuditDialog(row)}
+                                        disabled={!hasAudit}
+                                        aria-label={`View audit for row ${row.inward_number}`}
+                                      >
+                                        <HistoryIcon fontSize="small" />
+                                      </IconButton>
+                                    </span>
+                                  </Tooltip>
+                                </Stack>
+                              )}
+                            </TableCell>
+                          );
+                        }
+
+                        return (
+                          <TableCell
+                            key={c.field}
+                            sx={{ minWidth: COL_WIDTH[c.field] ?? 140, width: COL_WIDTH[c.field] ?? 140 }}
+                          >
                             {renderCell(row, c)}
                           </TableCell>
-                        )
-                      )}
+                        );
+                      })}
                     </TableRow>
                   ))
+
                 )}
               </TableBody>
             </Table>
@@ -659,6 +792,50 @@ export default function Receivables_Records() {
             onRowsPerPageChange={() => {}}
             rowsPerPageOptions={[pageSize]}
           />
+                    {/* Audit trail dialog */}
+          <Dialog
+            open={auditOpen}
+            onClose={closeAuditDialog}
+            maxWidth="md"
+            fullWidth
+          >
+            <DialogTitle>
+              Audit Trail
+              {auditRow?.inward_number ? ` – ${auditRow.inward_number}` : ""}
+            </DialogTitle>
+            <DialogContent
+              dividers
+              sx={{
+                bgcolor: "#0d1117",
+                p: 1.5,
+              }}
+            >
+              <Box
+                component="pre"
+                sx={{
+                  m: 0,
+                  fontFamily: "monospace",
+                  fontSize: 12,
+                  color: "#e5e7eb",
+                  maxHeight: "60vh",
+                  overflow: "auto",
+                  whiteSpace: "pre-wrap",
+                  wordBreak: "break-word",
+                }}
+              >
+                {auditText}
+              </Box>
+            </DialogContent>
+            <DialogActions>
+              <Button
+                onClick={closeAuditDialog}
+                startIcon={<CloseIcon />}
+              >
+                Close
+              </Button>
+            </DialogActions>
+          </Dialog>
+
         </Paper>
       </Box>
     </div>

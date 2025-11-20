@@ -20,11 +20,12 @@ const PostActivation = lazy(() => import('./PostActivation/PostActivation'));
 const ReceivablesPage = lazy(() => import('./Receivables/Receivables'));
 const RMSPage = lazy(() => import('./RMS/rms'));
 const ActivationPage =  lazy(() => import('./Activation/activation'));
+const DeliveryPage =  lazy(() => import('./Delivery/Delivery'));
 // TEMP: point all Ops child routes to PostActivation until ready
 const Receivables = ReceivablesPage;
 const RMS = RMSPage;
 const Activation =  ActivationPage
-const Delivery = PostActivation;
+const Delivery = DeliveryPage;
 
 function App() {
   const { access } = useContext(AuthContext);

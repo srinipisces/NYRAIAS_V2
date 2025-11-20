@@ -1,40 +1,52 @@
 import React, { useState, useContext } from 'react';
 import {
   Box, TextField, Button, Typography,
-  Paper, Grid, Dialog, DialogTitle, DialogContent,
-  DialogActions, FormControlLabel, Checkbox, Snackbar, Alert
+  Paper, Grid, Snackbar, Alert
 } from '@mui/material';
 import { AuthContext } from '../AuthContext';
 
-const AccessPages = {
-  'Dashboard': [],
-  'Operations': [
-    'Security', 'Lab', 'Raw-Material Inward', 'Crusher Performance', 'Raw-Material Outward',
-    'Kiln Feed','Kiln Feed Quality', 'Boiler Performance', 'Kiln Temperature','Kiln Output', 'Kiln Output Quality','De-Stoning','De-Stoning Quality','Screening Inward', 
-    'Screening Outward', 'Re-Process','Re-Process Quality','Stock','PostActivation'
-  ],
-  'Reports': [],
-  'Settings': [],
-  'DataFlow' : []
-};
+// NEW: import your grouped dialog component (the sample you attached)
+import EditAccessDialog from './EditAccessDialog';
 
 const API_BASE = import.meta.env.VITE_API_URL;
 
+// (kept) Your access catalog constant can remain in this file if you use it elsewhere.
+// It's no longer used for rendering the dialog here.
+const AccessPages = {
+  "Dashboard": [],
+  "Operations": {
+    "Receivables": ["Security", "Lab","Edit","Reports"],
+    "RMS": ["Raw-Material Inward", "Crusher Performance", "Raw-Material Outward","Edit","Reports"],
+    "Activation": ["Kiln Feed Quality","Kiln Feed","Kiln Output Quality","Boiler Performance","Kiln Temperature","Kiln Output","De-Stoning","De-Stoning Quality","Edit","Reports"],
+    "PostActivation": ["Quality","Screening","Crushing","De-Dusting","De-Magnetize","Blending","Edit","Reports"],
+    "Delivery": []
+  },
+  "Reports": ["Receivables","RMS","Activation","PostActivation","Stock","General"],
+  "Settings": ["User Management","Add Suppliers","Grade Management"],
+};
+
 export default function AddUserForm({ onCancel, onSuccess }) {
   const { user } = useContext(AuthContext);
+
   const [formData, setFormData] = useState({
     userid: '',
     name: '',
     email: '',
     phone: '',
+    // keep your original access flags to avoid any UI changes elsewhere
     access: {
-      Dashboard: false,  // Default Dashboard to unselected
-      Operations: [],   // Default Operations as an empty array
-      Reports: false,    // Default Reports to unselected
-      Settings: false,    // Default Settings to unselected
+      Dashboard: false,
+      Operations: [],   // kept but unused for the dialog now
+      Reports: false,
+      Settings: false,
       DataFlow: false
     },
   });
+
+  // NEW: this holds the grouped-format tokens coming back from EditAccessDialog
+  // e.g., ["Dashboard","Reports.Stock","Operations.RMS.Raw-Material Inward", ...]
+  const [accessTokens, setAccessTokens] = useState([]);
+
   const [accessDialogOpen, setAccessDialogOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
@@ -43,70 +55,23 @@ export default function AddUserForm({ onCancel, onSuccess }) {
     setFormData({ ...formData, [field]: e.target.value });
   };
 
-  // Check if all pages in Operations are selected
-  const isAllOperationsSelected = formData.access.Operations.length === AccessPages.Operations.length;
-
-  // Check if some pages in Operations are selected but not all
-  const isOperationsIndeterminate = formData.access.Operations.length > 0 && !isAllOperationsSelected;
-
-  // Toggle the Operations parent checkbox (Select/Deselect all pages in Operations)
-  const handleChangeOperationsParent = (event) => {
-    const newAccess = event.target.checked ? [...AccessPages.Operations] : [];
-    setFormData((prevState) => ({
-      ...prevState,
-      access: { ...prevState.access, Operations: newAccess }
-    }));
-  };
-
-  // Toggle individual page selection within the Operations category
-  const handleChangePageAccess = (page) => {
-    setFormData((prevState) => {
-      const access = prevState.access.Operations.includes(page)
-        ? prevState.access.Operations.filter((p) => p !== page)
-        : [...prevState.access.Operations, page];
-
-      return {
-        ...prevState,
-        access: { ...prevState.access, Operations: access },
-      };
-    });
-  };
-
-  // Handle submit to send only selected pages
+  // SUBMIT: send tokens returned by the grouped dialog (no UI changes)
   const handleSubmit = async () => {
     if (!formData.userid || !formData.email || !formData.name) {
       return setSnackbar({ open: true, message: 'Name, User ID, and Email are required', severity: 'error' });
     }
 
-    // Prepare the array of selected pages
-    const selectedAccessPages = [];
-    
-    // Check and add categories to the selected array
-    for (const [category, isSelected] of Object.entries(formData.access)) {
-      if (isSelected) {
-        if (category === 'Operations') {
-          // For Operations, include child pages with `Operations.<page-name>`
-          formData.access.Operations.forEach((page) => {
-            selectedAccessPages.push(`Operations.${page}`);
-          });
-        } else {
-          // For other categories (Dashboard, Reports, Settings), include them directly
-          selectedAccessPages.push(category);
-        }
-      }
-    }
-
     try {
+      setSubmitting(true);
       const res = await fetch(`${API_BASE}/api/users/createuser/`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
+        headers: { 'Content-Type': 'application/json' },
         credentials: 'include',
         body: JSON.stringify({
           ...formData,
-          accountid: user.accountid,  // Send accountid from AuthContext
-          access: selectedAccessPages, // Send the selected pages array to the backend
+          accountid: user.accountid,
+          // ⬇️ send the grouped tokens exactly as the dialog builds them
+          access: accessTokens,
           status: true,
           createdBy: user.userid
         })
@@ -124,6 +89,8 @@ export default function AddUserForm({ onCancel, onSuccess }) {
       }
     } catch (err) {
       setSnackbar({ open: true, message: 'Server error', severity: 'error' });
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -145,6 +112,7 @@ export default function AddUserForm({ onCancel, onSuccess }) {
           <TextField label="Phone" value={formData.phone} onChange={handleChange('phone')} fullWidth size="small" />
         </Grid>
 
+        {/* Same button as before — only behavior change is it opens your grouped dialog */}
         <Grid item xs={12} md={3}>
           <Button variant="outlined" onClick={() => setAccessDialogOpen(true)}>
             Select Access Pages
@@ -161,67 +129,19 @@ export default function AddUserForm({ onCancel, onSuccess }) {
         </Grid>
       </Grid>
 
-      <Dialog open={accessDialogOpen} onClose={() => setAccessDialogOpen(false)}>
-        <DialogTitle>Select Access Pages</DialogTitle>
-        <DialogContent>
-          {Object.keys(AccessPages).map((category) => (
-            <Box key={category}>
-              {/* Operations parent checkbox */}
-              {category === 'Operations' && (
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={isAllOperationsSelected}
-                      indeterminate={isOperationsIndeterminate}
-                      onChange={handleChangeOperationsParent}
-                    />
-                  }
-                  label={category}
-                />
-              )}
-
-              {/* Normal checkboxes for Dashboard, Reports, and Settings */}
-              {category !== 'Operations' && (
-                <FormControlLabel
-                  control={
-                    <Checkbox
-                      checked={formData.access[category]}  // Check if category is selected
-                      onChange={() => {
-                        setFormData({
-                          ...formData,
-                          access: { ...formData.access, [category]: !formData.access[category] }
-                        });
-                      }} // Toggle category selection
-                    />
-                  }
-                  label={category}
-                />
-              )}
-
-              {/* Show child pages only for Operations */}
-              {category === 'Operations' && (
-                <Box sx={{ ml: 3 }}>
-                  {AccessPages[category].map((page) => (
-                    <FormControlLabel
-                      key={page}
-                      control={
-                        <Checkbox
-                          checked={formData.access.Operations.includes(page)}  // Check if the page is selected
-                          onChange={() => handleChangePageAccess(page)}  // Toggle page selection
-                        />
-                      }
-                      label={page}
-                    />
-                  ))}
-                </Box>
-              )}
-            </Box>
-          ))}
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => setAccessDialogOpen(false)}>Done</Button>
-        </DialogActions>
-      </Dialog>
+      {/* REPLACEMENT: use your EditAccessDialog for the grouped view */}
+      <EditAccessDialog
+        open={accessDialogOpen}
+        onClose={() => setAccessDialogOpen(false)}
+        // pass minimal identity so the dialog title can show the userid if needed
+        user={{ userid: formData.userid, access: accessTokens }}
+        accessConfig={AccessPages}   // uses your exact structure & order
+        tokens={accessTokens}        // current selection tokens
+        onSave={(updatedTokens) => { // called by the dialog’s Save/Update handler
+          setAccessTokens(updatedTokens);
+          setAccessDialogOpen(false);
+        }}
+      />
 
       <Snackbar
         open={snackbar.open}

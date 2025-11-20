@@ -4,7 +4,7 @@ import { Suspense } from 'react';
 import { Box, Paper, Tabs, Tab, GlobalStyles, Button, Typography } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
-
+import { useAuth } from '../AuthContext';
 // Helper: lazy() + inject tabName
 const lazyWithTabName = (importer, tabName) =>
   React.lazy(() =>
@@ -36,6 +36,21 @@ const TAB_ITEMS = [
   { label: 'Records',    key: 'records',   Component: StockTab },
   { label: 'Reports',    key: 'reports',   Component: ReportTab },
 ];
+
+// ------- helper: access check (Operations.PostActivation.<Label>) -------
+function hasAccessForTabLabel(accessList, tabLabel) {
+  if (!Array.isArray(accessList) || !tabLabel) return false;
+  const target = String(tabLabel).trim().toLowerCase(); // e.g. "quality"
+  return accessList.some((token) => {
+    if (typeof token !== 'string') return false;
+    const m = token.match(/^Operations\.PostActivation\.(.+)$/i);
+    if (!m) return false;
+    const last = m[1].split('.').pop()?.trim().toLowerCase(); // after the prefix
+    return last === target;
+  });
+}
+
+
 
 const a11yProps = (i) => ({ id: `postact-tab-${i}`, 'aria-controls': `postact-tabpanel-${i}` });
 
@@ -132,6 +147,24 @@ export default function PostActivation() {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('sm'));
 
+  // --- NEW: read access from AuthContext ---
+  const { access } = useAuth();
+  const userAccess = Array.isArray(access) ? access : [];
+
+  // --- NEW: filter tabs based on access; Records is ALWAYS visible ---
+  const visibleTabs = React.useMemo(
+    () =>
+      TAB_ITEMS.filter(
+        (t) => t.key === 'records' || hasAccessForTabLabel(userAccess, t.label)
+      ),
+    [userAccess]
+  );
+
+  // --- NEW: clamp selected tab index when visibleTabs changes ---
+  React.useEffect(() => {
+    setTab((prev) => Math.min(prev, Math.max(visibleTabs.length - 1, 0)));
+  }, [visibleTabs.length]);
+
   return (
     <Box
       sx={{
@@ -170,7 +203,7 @@ export default function PostActivation() {
               '& .MuiTabs-scrollButtons': { display: { xs: 'none', sm: 'flex' } },
             }}
           >
-            {TAB_ITEMS.map((t, i) => (
+            {visibleTabs.map((t, i) => (
               <Tab
                 key={t.label}
                 label={t.label}
@@ -197,7 +230,7 @@ export default function PostActivation() {
           display: 'flex', flexDirection: 'column', p: 0, overflowX: 'hidden',
         }}
       >
-        {TAB_ITEMS.map((t, i) => (
+        {visibleTabs.map((t, i) => (
           <TabPanel key={t.key} value={tab} index={i}>
             <Suspense fallback={<div style={{ padding: 16 }}>Loading {t.label}…</div>}>
               <t.Component />

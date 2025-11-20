@@ -452,7 +452,55 @@ const reportConfigs = [
             const { rows = [], total = 0 } = res.data || {};
             return { rows, total };
         },
-    }
+
+    },
+    {
+        id: "bags_in_stock",
+        name: "Bags In Stock",
+        description: "Bags in stock or in quality or about to be processed",
+        endpoint: { method: "GET", path: "/api/reports_postactivation/bags_in_stock" },
+        csv:      { method: "GET", path: "/api/reports_postactivation/bags_in_stock.csv" },
+        pageSize: 50,
+        // no filters – just Generate
+        fields: [],
+        buildParams: ({ page, pageSize, sort, dir }) => {
+        const params = {
+            page,
+            pageSize,
+            sort: sort || "bag_no",
+            dir:  dir  || "asc",
+        };
+        return { params };
+        },
+        readResponse: (res) => {
+        const { rows = [], total = 0 } = res.data || {};
+        return { rows, total };
+        },
+    },
+    {
+        id: "bags_in_stock_summary",
+        name: "Summary – Bags In Stock",
+        description: "Summary of Bags in stock or in quality or about to be processed",
+        endpoint: { method: "GET", path: "/api/reports_postactivation/bags_in_stock_summary" },
+        csv:      { method: "GET", path: "/api/reports_postactivation/bags_in_stock_summary.csv" },
+        pageSize: 50,
+        // no filters – just Generate
+        fields: [],
+        buildParams: ({ page, pageSize, sort, dir }) => {
+        const params = {
+            page,
+            pageSize,
+            sort: sort || "grade",
+            dir:  dir  || "asc",
+        };
+        return { params };
+        },
+        readResponse: (res) => {
+        const { rows = [], total = 0 } = res.data || {};
+        return { rows, total };
+        },
+    },
+
 
 
   // Add more reports here...

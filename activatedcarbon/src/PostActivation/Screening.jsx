@@ -7,7 +7,7 @@
 // - Middle panel: Output Grade Settings (select chips). Output panel shows ONLY selected grades.
 // - Create label shows toast success/failure; goes to quality automatically (handled backend)
 
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState,useRef } from "react";
 import {
   Box,
   Grid,
@@ -25,8 +25,9 @@ import {
   LinearProgress,
   Snackbar,
   Menu,
-  MenuItem,
+  MenuItem
 } from "@mui/material";
+
 // put near your other imports
 import Dialog from "@mui/material/Dialog";
 import DialogTitle from "@mui/material/DialogTitle";
@@ -86,6 +87,12 @@ export default function Screening({ tabName }) {
   const [snack, setSnack] = useState({ open: false, sev: "success", msg: "" });
   const showError = (msg) => setSnack({ open: true, sev: "error", msg: msg || "Something went wrong." });
   const showSuccess = (msg) => setSnack({ open: true, sev: "success", msg });
+
+  // Popup-only memory (no weight/outSaving added)
+  const pendingGradeRef = useRef(null);
+  const [machineDialogOpen, setMachineDialogOpen] = useState(false);
+  const [machineDialogValue, setMachineDialogValue] = useState(""); // "Gyro" | "Shaker"
+
 
   // --- Fetchers ---
   const fetchAvailable = async () => {
@@ -221,12 +228,12 @@ export default function Screening({ tabName }) {
   };
 
   // Create output label → auto to Quality (backend). Show toast on success/failure.
-  const handleAddOut = async (grade) => {
+  const handleAddOut = async (grade,machine) => {
     const w = Number(newLabelWeight[grade]);
     if (!Number.isFinite(w) || w <= 0) return;
     setOutSaving(true);
     try {
-      const { data } = await api.post(`/api/post_activation/createlabel_cont`, { grade, weight: w }, { params: { tabName }, withCredentials: true });
+      const { data } = await api.post(`/api/post_activation/createlabel_cont`, { grade, weight: w,machine }, { params: { tabName }, withCredentials: true });
       setNewLabelWeight((prev) => ({ ...prev, [grade]: "" }));
       showSuccess(`Label created: ${data?.created?.bag_no}`);
       
@@ -326,6 +333,36 @@ export default function Screening({ tabName }) {
         }
       };
 
+      const handleCreateLabelClick = (grade) => {
+      const isScreening = String(tabName || "").trim() === "Screening";
+
+      if (isScreening) {
+        // Show popup ONLY for Screening; remember which grade was clicked
+        pendingGradeRef.current = grade;
+        setMachineDialogValue(""); // force explicit selection
+        setMachineDialogOpen(true);
+        return;
+      }
+
+      // All other tabs: call as-is
+      handleAddOut(grade);
+    };
+
+    const handleConfirmMachine = () => {
+      if (!machineDialogValue || !pendingGradeRef.current) return;
+
+      const grade = pendingGradeRef.current;
+      setMachineDialogOpen(false);
+      pendingGradeRef.current = null;
+
+      // Same endpoint; include { machine } ONLY for Screening
+      handleAddOut(grade, machineDialogValue);
+    };
+
+    const handleCancelMachine = () => {
+      setMachineDialogOpen(false);
+      pendingGradeRef.current = null;
+    };
 
 
   // --- UI ---
@@ -610,7 +647,7 @@ export default function Screening({ tabName }) {
                             <span>
                               <IconButton
                                 size="small"
-                                onClick={() => handleAddOut(g)}
+                                onClick={() => handleCreateLabelClick(g)}
                                 disabled={!weightValid || outSaving}
                                 color="warning"
                                 sx={{
@@ -744,6 +781,30 @@ export default function Screening({ tabName }) {
         </DialogActions>
         </Dialog>
 
+        <Dialog open={machineDialogOpen} onClose={handleCancelMachine} fullWidth maxWidth="xs">
+          <DialogTitle sx={{ pb: 1 }}>Select machine</DialogTitle>
+          <DialogContent dividers>
+            <FormControl>
+              <RadioGroup
+                value={machineDialogValue}
+                onChange={(e) => setMachineDialogValue(e.target.value)}
+              >
+                <FormControlLabel value="Gyro"   control={<Radio size="small" />} label="Gyro" />
+                <FormControlLabel value="Shaker" control={<Radio size="small" />} label="Shaker" />
+              </RadioGroup>
+            </FormControl>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCancelMachine}>Cancel</Button>
+            <Button
+              variant="contained"
+              onClick={handleConfirmMachine}
+              disabled={!machineDialogValue}        // must explicitly pick
+            >
+              Continue
+            </Button>
+          </DialogActions>
+        </Dialog>
 
       {/* Snackbar */}
       <Snackbar
