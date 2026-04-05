@@ -9,16 +9,18 @@ import {
 } from '@mui/material';
 import axios from 'axios';
 
-const API_URL = import.meta.env.VITE_API_URL;
+
 
 const LoginPage = () => {
+  const API_URL = import.meta.env.VITE_API_URL;
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
+  console.log(API_URL);
   // ✅ Auto-login check using token on page load
   useEffect(() => {
+    console.log('hellooo...',API_URL);
     axios
       .get(`${API_URL}/api/users/validate-token`, {
         withCredentials: true,

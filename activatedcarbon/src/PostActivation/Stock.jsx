@@ -130,7 +130,7 @@ export default function Stock({ panels = [], barHeight = 52, visibleRows = 10, r
   const authCtx = typeof useAuth === "function" ? useAuth() : null;
   const accessArr = Array.isArray(authCtx?.access) ? authCtx.access : [];
   const canEditActivation = accessArr.includes("Operations.PostActivation.Edit");
-  console.log(accessArr);
+
   const isLoadedLike = (status) => /_Loaded$/i.test(String(status || ""));
 
   // ---- Edit dialog state

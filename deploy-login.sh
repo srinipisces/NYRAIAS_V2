@@ -30,6 +30,8 @@ echo "🏗 Building $APP_NAME..."
 
 # Temporarily override .env
 cp .env.production .env
+cp vite.config.production.js vite.config.js
+cp ./src/main.production.jsx ./src/main.jsx
 
 pnpm install
 pnpm run build || { echo "❌ Build failed"; exit 1; }

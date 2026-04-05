@@ -160,7 +160,7 @@ export default function ReportsHub() {
 
       const url = `${API}${path}`;
       const axiosOpts = { withCredentials: true, ...(cfg || {}) };
-
+      console.log("URL",url,method);
       let res;
       if ((method || "GET").toUpperCase() === "GET") {
         //res = await axios.get(url, axiosOpts);
@@ -191,7 +191,7 @@ export default function ReportsHub() {
       setValidationError(err);
       return;
     }
-    const { path } = selected.csv;
+    const { method,path } = selected.csv;
     const cfg = selected.buildParams({
       filters: activeFilters,
       page: 1,
@@ -204,7 +204,10 @@ export default function ReportsHub() {
     //window.location.href = url; // trigger browser download
     const qs = new URLSearchParams(cfg.params || {}).toString();
     const url = `${API}${path}?${qs}`;
-    api.get(url, { responseType: 'blob' })
+
+    if ((method || "GET").toUpperCase() === "GET") {
+        //res = await axios.get(url, axiosOpts);
+        api.get(url, { responseType: 'blob' })
         .then((res) => {
         const blob = new Blob([res.data], { type: res.headers['content-type'] || 'text/csv' });
         const link = document.createElement('a');
@@ -224,6 +227,52 @@ export default function ReportsHub() {
         // Non-401 errors will be shown by the component's error state if needed
         setError(err?.response?.data?.error || err?.message || "Failed to download CSV");
         });
+      } else {
+        api.post(url, { responseType: 'blob' })
+        .then((res) => {
+        const blob = new Blob([res.data], { type: res.headers['content-type'] || 'text/csv' });
+        const link = document.createElement('a');
+        const cd = res.headers['content-disposition'] || '';
+        const match = /filename="?([^"]+)"?/.exec(cd);
+        //const fname = match?.[1] || `${(selected?.id || 'report')}.csv`;
+        const fname =
+           (match && match[1]) ? match[1]
+           : `${((selected && selected.id) ? selected.id : 'report')}.csv`;
+        link.href = URL.createObjectURL(blob);
+        link.download = fname;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        })
+        .catch((err) => {
+        // Non-401 errors will be shown by the component's error state if needed
+        setError(err?.response?.data?.error || err?.message || "Failed to download CSV");
+        });
+      }
+
+
+
+
+    /* api.get(url, { responseType: 'blob' })
+        .then((res) => {
+        const blob = new Blob([res.data], { type: res.headers['content-type'] || 'text/csv' });
+        const link = document.createElement('a');
+        const cd = res.headers['content-disposition'] || '';
+        const match = /filename="?([^"]+)"?/.exec(cd);
+        //const fname = match?.[1] || `${(selected?.id || 'report')}.csv`;
+        const fname =
+           (match && match[1]) ? match[1]
+           : `${((selected && selected.id) ? selected.id : 'report')}.csv`;
+        link.href = URL.createObjectURL(blob);
+        link.download = fname;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        })
+        .catch((err) => {
+        // Non-401 errors will be shown by the component's error state if needed
+        setError(err?.response?.data?.error || err?.message || "Failed to download CSV");
+        }); */
     };
 
   const cols = columnsFromRows(rows);

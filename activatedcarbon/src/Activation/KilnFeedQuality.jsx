@@ -17,10 +17,55 @@ const API_URL = import.meta.env.VITE_API_URL;
 const DEST_OPTIONS = ["InStock", "Screening", "Crushing", "De-Magnetize", "De-Dusting", "Blending"];
 
 // ---- helpers ----
-const fmtDT = (s) => {
+/* const fmtDT = (s) => {
   if (!s) return "";
   try { return new Date(s).toLocaleString(); } catch { return s; }
-};
+}; */
+
+function fmtDT(d) {
+  if (!d) return '';
+
+  try {
+    if (typeof d !== 'string') {
+      // Fallback: if somehow it's already a Date or something else
+      return new Date(d).toLocaleString();
+    }
+
+    // Normalize to "YYYY-MM-DDTHH:MM:SS.mmm"
+    let s = d.trim();
+
+    // Remove trailing Z (UTC flag) because we explicitly want NO timezone math
+    if (s.endsWith('Z')) {
+      s = s.slice(0, -1);
+    }
+
+    // Convert "YYYY-MM-DD HH:MM:SS..." to "YYYY-MM-DDTHH:MM:SS..."
+    if (s.includes(' ') && !s.includes('T')) {
+      s = s.replace(' ', 'T');
+    }
+
+    // Split date/time
+    const [datePart, timePartRaw] = s.split('T');
+    const [year, month, day] = datePart.split('-').map(Number);
+
+    const [hmsPart, msPartRaw] = (timePartRaw || '').split('.');
+    const [hour, minute, second] = (hmsPart || '').split(':').map((x) => Number(x || 0));
+    const ms = msPartRaw ? Number(msPartRaw.slice(0, 3)) : 0; // take first 3 digits as ms
+
+    // Build a Date in UTC with these *exact* components
+    // Then format in UTC so nothing shifts
+    const date = new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms));
+
+    // Use your environment's default locale (like a plain toLocaleString())
+    // but lock timeZone to 'UTC' so 12:51 stays 12:51 everywhere
+    //console.log("d",d,"conv",new Date(d).toLocaleString());
+    return date.toLocaleString(undefined, { timeZone: 'UTC' });
+  } catch {
+    // If anything fails, just return the raw string
+    return String(d);
+  }
+}
+
 const normalizeArray = (d) =>
   Array.isArray(d) ? d
   : Array.isArray(d?.rows) ? d.rows

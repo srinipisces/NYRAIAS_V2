@@ -17,7 +17,7 @@ const checkAccess= require('./checkaccess.js');
 //login
 router.post('/login', async (req, res) => {
   const { userid, password, accountid } = req.body;
-  console.log(userid,password,accountid);
+  console.log("called");
   if (!userid || !password || !accountid) {
 
     return res.status(400).json({ message: 'Missing credentials' });
@@ -31,7 +31,6 @@ router.post('/login', async (req, res) => {
       `SELECT password, access FROM ${tableName} WHERE upper(userid) = upper($1) AND status = true`,
       [userid]
     );
-    console.log(result,userid,password,accountid);
     if (result.rows.length === 0) {
       return res.status(401).json({ message: 'Invalid userid or password' });
     }
@@ -81,6 +80,7 @@ router.post('/login', async (req, res) => {
       [token, userid, accountid, expiresAt]
     );
     
+    console.log (route,accountid,vertical);
     // 5. Set token cookie and send response
     res
       .cookie('token', token, {

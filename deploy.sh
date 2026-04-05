@@ -29,14 +29,14 @@ if [ ! -f .env.production ]; then
 fi
 
 # Use .env.production temporarily
-cp .env.production .env
-
+#cp .env.production .env
+#cp vite.config.production.js vite.config.js
 # Build the Vite app
 pnpm install
-pnpm run build || { echo "❌ Build failed"; exit 1; }
+pnpm run build:production || { echo "❌ Build failed"; exit 1; }
 
 # Restore original .env (safe reset)
-git checkout .env
+#git checkout .env
 
 cd ..
 

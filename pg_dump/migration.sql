@@ -1,6 +1,5 @@
 truncate table samcarbons_postactivation;
 
-
 drop TRIGGER set_bag_no_on_postactivation ON samcarbons_postactivation; --BEFORE INSERT ON public.testbed_postactivation FOR EACH ROW EXECUTE FUNCTION public.trg_set_bag_no_postactivation();
 
 INSERT INTO samcarbons_postactivation (
@@ -39,7 +38,7 @@ SELECT
   userid                        AS quality_userid,        -- or: userid
   screening_out_dt                  AS quality_upd_dttime,      -- or: NOW() or NULL
   machine,
-  jsonb_build_object('ctc', ctc)    AS quality
+  jsonb_build_object('CTC', ctc)    AS quality
 FROM samcarbons_screening_outward
 where delivery_status in ('InStock','Delivered');
 
@@ -79,7 +78,7 @@ SELECT
   userid                        AS quality_userid,        -- or: userid
   screening_out_dt                  AS quality_upd_dttime,      -- or: NOW() or NULL
   machine,
-  jsonb_build_object('ctc', ctc)    AS quality
+  jsonb_build_object('CTC', ctc)    AS quality
 FROM samcarbons_screening_outward
 where delivery_status in ('Screening') and reload = 'InQue';
 
@@ -119,7 +118,7 @@ SELECT
   userid                        AS quality_userid,        -- or: userid
   screening_out_dt                  AS quality_upd_dttime,      -- or: NOW() or NULL
   machine,
-  jsonb_build_object('ctc', ctc)    AS quality
+  jsonb_build_object('CTC', ctc)    AS quality
 FROM samcarbons_screening_outward
 where delivery_status in ('Screening') and reload = 'loaded';
 
@@ -159,7 +158,7 @@ SELECT
   userid                        AS quality_userid,        -- or: userid
   screening_out_dt                  AS quality_upd_dttime,      -- or: NOW() or NULL
   machine,
-  jsonb_build_object('ctc', ctc)    AS quality
+  jsonb_build_object('CTC', ctc)    AS quality
 FROM samcarbons_screening_outward
 where delivery_status in ('Re-Processing');
 

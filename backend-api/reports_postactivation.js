@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('./db');
+const { Parser: Json2CsvParser } = require('json2csv');
+
 
 const checkAccess= require('./checkaccess.js');
 
@@ -1114,7 +1116,7 @@ router.get("/loaded_vs_output_bld_dd_dm", authenticate, async (req, res) => {
   if (from && to) {
     params.push(from, to); i += 2;
     // If you need IST days, replace ::date with "(bag_out_datetime AT TIME ZONE 'Asia/Kolkata')::date"
-    where.push(`(bag_out_datetime)::date BETWEEN $${i-1}::date AND $${i}::date`);
+    where.push(`(bags_out_datetime)::date BETWEEN $${i-1}::date AND $${i}::date`);
   }
 
   const whereSql = `WHERE ${where.join(" AND ")}`;
@@ -1123,7 +1125,7 @@ router.get("/loaded_vs_output_bld_dd_dm", authenticate, async (req, res) => {
   const aggregated = `
     SELECT
       operations,
-      (bag_out_datetime)::date AS day,
+      (bags_out_datetime)::date AS day,
       ROUND(SUM(COALESCE(loaded_weight, 0))::numeric, 2)     AS loaded_weight,
       ROUND(SUM(COALESCE(total_out_weight, 0))::numeric, 2)  AS total_out_weight
     FROM ${table}
@@ -1180,20 +1182,20 @@ router.get("/loaded_vs_output_bld_dd_dm.csv", authenticate, async (req, res) => 
   if (op) { params.push(op); i++; where.push(`operations = $${i}`); }
   else    { params.push(ALLOWED); i++; where.push(`operations = ANY($${i}::text[])`); }
 
-  if (from && to) { params.push(from, to); i += 2; where.push(`(bag_out_datetime)::date BETWEEN $${i-1}::date AND $${i}::date`); }
+  if (from && to) { params.push(from, to); i += 2; where.push(`(bags_out_datetime)::date BETWEEN $${i-1}::date AND $${i}::date`); }
 
   const whereSql = `WHERE ${where.join(" AND ")}`;
 
   const sql = `
     SELECT
       operations,
-      to_char((bag_out_datetime)::date, 'MM-DD-YYYY') AS date,
+      to_char((bags_out_datetime)::date, 'MM-DD-YYYY') AS date,
       ROUND(SUM(COALESCE(loaded_weight, 0))::numeric, 2)     AS loaded_weight,
       ROUND(SUM(COALESCE(total_out_weight, 0))::numeric, 2)  AS total_out_weight
     FROM ${table}
     ${whereSql}
-    GROUP BY operations, (bag_out_datetime)::date
-    ORDER BY (bag_out_datetime)::date DESC, operations DESC
+    GROUP BY operations, (bags_out_datetime)::date
+    ORDER BY (bags_out_datetime)::date DESC, operations DESC
   `;
 
   try {
@@ -1933,7 +1935,7 @@ router.post("/quality_report.csv", authenticate, async (req, res) => {
       ...r,
       quality: typeof r.quality === "string" ? r.quality : JSON.stringify(r.quality ?? {}),
     }));
-    const { Parser: Json2CsvParser } = await import("json2csv");
+    //const { Parser: Json2CsvParser } = await import("json2csv");
     const parser = new Json2CsvParser({ header: true });
     const csv = parser.parse(safeRows);
     res.setHeader("Content-Type", "text/csv; charset=utf-8");

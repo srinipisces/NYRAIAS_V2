@@ -3,11 +3,12 @@ const router = express.Router();
 const pool = require('./db');
 
 const checkAccess= require('./checkaccess.js');
+const { Parser: Json2CsvParser } = require('json2csv');
 
 
 // 🛡️ Auth Middleware
 const { authenticate } = require('./authenticate');
-
+console.log("Kiln_yield");
 /* =================== KILN FEED QUALITY (JSON + CSV) =================== */
 
 // local helpers (scoped to this file)
@@ -143,7 +144,7 @@ router.get("/kiln_feed_quality.csv", authenticate, async (req, res) => {
   const client = await pool.connect();
   try {
     const { rows } = await client.query(sql, vals);
-    const { Parser: Json2CsvParser } = await import("json2csv");
+    //const { Parser: Json2CsvParser } = await import("json2csv");
     const parser = new Json2CsvParser({ header: true });
     const csv = parser.parse(rows);
 

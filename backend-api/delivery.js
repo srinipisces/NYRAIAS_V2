@@ -36,7 +36,6 @@ router.get("/instock-ctc", authenticate, async (req, res) => {
         'destoning'::text                      AS source
       FROM ${desTable} d
       WHERE d.final_destination = 'InStock'
-        AND COALESCE(d.quality_ctc, 0) > 0
 
       UNION ALL
 
@@ -54,10 +53,6 @@ router.get("/instock-ctc", authenticate, async (req, res) => {
         'postactivation'::text                 AS source
       FROM ${postTable} p
       WHERE p.stock_status = 'InStock'
-        AND COALESCE(
-          NULLIF(p.quality->>'CTC', ''),
-          NULLIF(p.quality->>'ctc', '')
-        )::numeric > 0
     ),
     filtered AS (
       SELECT *
@@ -105,7 +100,7 @@ router.put("/instock-ctc/move", authenticate, async (req, res) => {
   const { accountid, userid } = req.user || {};
   if (!accountid) return res.status(401).json({ error: "unauthorized" });
 
-  const ALLOWED = new Set(["Packaging", "Screening", "De-Dusting", "De-Magnetize", "Blending"]);
+  const ALLOWED = new Set(["Packaging", "Screening", "De-Dusting", "De-Magnetize", "Blending","Crushing"]);
   const { target, items } = req.body || {};
 
   if (!ALLOWED.has(target)) {
@@ -323,6 +318,228 @@ router.get("/stock_in_packaging.csv", authenticate, async (req, res) => {
 });
 /* ================= /STOCK IN PACKAGING (JSON + CSV) ================= */
 
+//** -20 and others... */
+
+
+
+function parseDateInput(s, endOfDay = false) {
+  if (!s) return null;
+
+  // YYYY-MM-DD
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) {
+    return endOfDay ? `${s} 23:59:59` : `${s} 00:00:00`;
+  }
+
+  // DD-MM-YYYY
+  if (/^\d{2}-\d{2}-\d{4}$/.test(s)) {
+    const [dd, mm, yyyy] = s.split("-");
+    const iso = `${yyyy}-${mm}-${dd}`;
+    return endOfDay ? `${iso} 23:59:59` : `${iso} 00:00:00`;
+  }
+
+  const dt = new Date(s);
+  if (!Number.isNaN(dt.getTime())) return dt.toISOString();
+  return null;
+}
+
+router.get("/rms-instock", authenticate, async (req, res) => {
+  const { accountid } = req.user;
+
+  // Optional safety: ensure accountid is safe for SQL identifier usage
+  if (!/^[a-z0-9_]+$/i.test(accountid)) {
+    return res.status(400).json({ error: "Invalid accountid" });
+  }
+
+  const page = Math.max(parseInt(req.query.page || "1", 10), 1);
+  const limit = 50; // fixed
+  const offset = (page - 1) * limit;
+
+  const bagNo = (req.query.bag_no || "").trim();
+  const inwardNumber = (req.query.inward_number || "").trim();
+  const from = parseDateInput((req.query.from || "").trim(), false);
+  const to = parseDateInput((req.query.to || "").trim(), true);
+
+  const tableName = `${accountid}_material_outward_bag`;
+
+  const where = [];
+  const params = [];
+  let p = 1;
+
+  where.push(`grade NOT LIKE 'Grade%'`);
+  where.push(`bag_status = 'InStock'`);
+  const grade = (req.query.grade || "").trim();
+
+  if (grade) {
+    params.push(`%${grade}%`);
+    where.push(`grade ILIKE $${p++}`);
+  }
+
+  if (bagNo) {
+    params.push(`%${bagNo}%`);
+    where.push(`bag_no ILIKE $${p++}`);
+  }
+
+  if (inwardNumber) {
+    params.push(inwardNumber);
+    where.push(`inward_number = $${p++}`);
+  }
+
+  if (from && to) {
+    params.push(from, to);
+    where.push(`write_timestamp BETWEEN $${p++} AND $${p++}`);
+  } else if (from) {
+    params.push(from);
+    where.push(`write_timestamp >= $${p++}`);
+  } else if (to) {
+    params.push(to);
+    where.push(`write_timestamp <= $${p++}`);
+  }
+
+  const whereSql = `WHERE ${where.join(" AND ")}`;
+
+  const countSql = `
+    SELECT COUNT(*)::int AS total
+    FROM ${tableName}
+    ${whereSql}
+  `;
+
+  params.push(limit, offset);
+
+  const dataSql = `
+    SELECT
+      to_char(write_timestamp AT TIME ZONE 'Asia/Kolkata', 'DD-MM-YYYY HH24:MI:SS') AS bag_generated_datetime,
+      inward_number,
+      bag_no,
+      grade,
+      weight,
+      bag_status,
+      bag_status_change_userid,
+      bag_status_change_dt
+    FROM ${tableName}
+    ${whereSql}
+    ORDER BY write_timestamp DESC
+    LIMIT $${p++} OFFSET $${p++}
+  `;
+
+  try {
+    const [countResult, dataResult] = await Promise.all([
+      pool.query(countSql, params.slice(0, params.length - 2)),
+      pool.query(dataSql, params),
+    ]);
+
+    const totalRows = countResult.rows?.[0]?.total ?? 0;
+    const totalPages = Math.max(Math.ceil(totalRows / limit), 1);
+
+    return res.json({
+      page,
+      per_page: limit,
+      total_rows: totalRows,
+      total_pages: totalPages,
+      rows: dataResult.rows,
+      applied_filters: {
+        bag_no: bagNo || null,
+        inward_number: inwardNumber || null,
+        from: from || null,
+        to: to || null,
+      },
+    });
+  } catch (err) {
+    console.error("[outward-instock] error:", err);
+    return res.status(500).json({ error: "Failed to fetch outward instock report" });
+  }
+});
+
+router.post("/rms-instock/move-to-packaging", authenticate, async (req, res) => {
+  const { accountid, userid } = req.user;
+
+  // Optional safety
+  if (!/^[a-z0-9_]+$/i.test(accountid)) {
+    return res.status(400).json({ error: "Invalid accountid" });
+  }
+
+  const mode = (req.body?.mode || "selected").toLowerCase();
+  const tableName = `${accountid}_material_outward_bag`;
+
+  // Base constraints (must match your report)
+  const where = [];
+  const params = [];
+  let p = 1;
+
+  where.push(`grade NOT LIKE 'Grade%'`);
+  where.push(`bag_status = 'InStock'`);
+
+  // Filters (used only when mode=select_all, but safe to accept always)
+  const filters = req.body?.filters || {};
+  const bagNoFilter = (filters.bag_no || "").trim();         // contains
+  const inwardNumber = (filters.inward_number || "").trim(); // exact
+  const from = parseDateInput((filters.from || "").trim(), false);
+  const to = parseDateInput((filters.to || "").trim(), true);
+  const gradeFilter = (filters.grade || "").trim();
+  if (gradeFilter) {
+    params.push(gradeFilter);
+    where.push(`grade = $${p++}`);
+  }
+
+  if (bagNoFilter) {
+    params.push(`%${bagNoFilter}%`);
+    where.push(`bag_no ILIKE $${p++}`);
+  }
+  if (inwardNumber) {
+    params.push(inwardNumber);
+    where.push(`inward_number = $${p++}`);
+  }
+  if (from && to) {
+    params.push(from, to);
+    where.push(`write_timestamp BETWEEN $${p++} AND $${p++}`);
+  } else if (from) {
+    params.push(from);
+    where.push(`write_timestamp >= $${p++}`);
+  } else if (to) {
+    params.push(to);
+    where.push(`write_timestamp <= $${p++}`);
+  }
+
+  if (mode === "selected") {
+    const bag_nos = Array.isArray(req.body?.bag_nos) ? req.body.bag_nos.filter(Boolean) : [];
+    if (bag_nos.length === 0) {
+      return res.status(400).json({ error: "bag_nos is required for mode=selected" });
+    }
+    params.push(bag_nos);
+    where.push(`bag_no = ANY($${p++})`);
+  } else if (mode === "select_all") {
+    // no extra condition; filters + base constraints will apply
+  } else {
+    return res.status(400).json({ error: "Invalid mode. Use 'selected' or 'select_all'." });
+  }
+
+  const whereSql = `WHERE ${where.join(" AND ")}`;
+
+  // userid param for update
+  params.push(userid);
+
+  const updateSql = `
+    UPDATE ${tableName}
+    SET
+      bag_status = 'Packaging',
+      bag_status_change_userid = $${p},
+      bag_status_change_dt = timezone('Asia/Kolkata', now())
+    ${whereSql};
+  `;
+
+  try {
+    const upd = await pool.query(updateSql, params);
+
+    return res.json({
+      ok: true,
+      mode,
+      updated: upd.rowCount || 0,
+      message: `Moved ${upd.rowCount || 0} bag(s) to Packaging.`,
+    });
+  } catch (err) {
+    console.error("[move-to-packaging] error:", err);
+    return res.status(500).json({ error: "Failed to move bags to Packaging" });
+  }
+});
 
 
 module.exports = router;

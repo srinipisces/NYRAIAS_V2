@@ -3,7 +3,7 @@ import { Box, CssBaseline, Drawer, Divider, Toolbar } from '@mui/material';
 import Topbar from './Topbar';      // ensure correct path
 import Sidebar from './Sidebar';    // ensure correct path
 import { Outlet } from 'react-router-dom';
-
+import FactoryLogsChatWidget from '../Log_Widget/Logwidget';
 const EXPANDED_WIDTH = 260;
 const COLLAPSED_WIDTH = 76;
 
@@ -70,6 +70,7 @@ export default function PageLayout({ children }) {
         <Outlet />
         {children}
       </Box>
+      <FactoryLogsChatWidget />
     </Box>
   );
 }

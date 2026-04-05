@@ -17,11 +17,13 @@ const lazyWithTabName = (importer, tabName) =>
 
 // Load_Unload with just tabName baked in
 const InstockTab     = lazyWithTabName(() => import('./InStock'), 'InStock');
+const RMSInstockTab     = lazyWithTabName(() => import('./RMSInStock'), 'RMSInStock');
 const ReportTab     = lazyWithTabName(() => import('./Delivery_ReportsHub'), 'Reports');
 
 // Optional: your tab registry
 const TAB_ITEMS = [
   { label: 'InStock',      key: 'InStock',     Component: InstockTab },
+  { label: 'RMSInstockTab',      key: 'RMSInstockTab',     Component: RMSInstockTab },
   { label: 'Reports',    key: 'reports',   Component: ReportTab },
 ];
 

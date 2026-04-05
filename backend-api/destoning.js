@@ -188,7 +188,7 @@ router.get("/status", authenticate, async (req, res) => {
   }
 });
 
-router.post("/load", authenticate, checkAccess("Operations.Activation.De-Stoning"), async (req, res) => {
+/* router.post("/load", authenticate, checkAccess("Operations.Activation.De-Stoning"), async (req, res) => {
   const { accountid, userid } = req.user;
   const destoningTable = `${accountid}_destoning`;
   const kilnTable = `${accountid}_kiln_output`;
@@ -245,7 +245,83 @@ router.post("/load", authenticate, checkAccess("Operations.Activation.De-Stoning
   } finally {
     client.release();
   }
-});
+}); */
+
+router.post(
+  "/load",
+  authenticate,
+  checkAccess("Operations.Activation.De-Stoning"),
+  async (req, res) => {
+    const { accountid, userid } = req.user;
+    const destoningTable = `${accountid}_destoning`;
+    const kilnTable = `${accountid}_kiln_output`;
+    const { loaded_bags, loaded_weight } = req.body;
+
+    if (!Array.isArray(loaded_bags) || loaded_bags.length === 0) {
+      return res.status(400).json({ error: "No bags provided" });
+    }
+
+    // Normalize + dedupe (remove duplicates automatically)
+    const uniqueBags = [...new Set(loaded_bags.map((b) => String(b).trim()))].filter(Boolean);
+
+    if (uniqueBags.length === 0) {
+      return res.status(400).json({ error: "No valid bags provided" });
+    }
+
+    if (!loaded_weight || isNaN(loaded_weight)) {
+      return res.status(400).json({ error: "Invalid or missing loaded weight" });
+    }
+
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      // Ensure no active destoning with same bags
+      const check = await client.query(
+        `SELECT 1
+         FROM ${destoningTable}
+         WHERE ds_bag_no IS NULL
+           AND loaded_bags && $1`,
+        [uniqueBags]
+      );
+
+      if (check.rowCount > 0) {
+        await client.query("ROLLBACK");
+        return res
+          .status(409)
+          .json({ error: "Some bags are already loaded in an active session" });
+      }
+
+      // Insert into destoning table
+      await client.query(
+        `INSERT INTO ${destoningTable} (loaded_bags, loaded_weight, userid)
+         VALUES ($1, $2, $3)`,
+        [uniqueBags, loaded_weight, userid]
+      );
+
+      // Update exkiln_stock in kiln output table
+      await client.query(
+        `UPDATE ${kilnTable}
+         SET exkiln_stock = 'DeStoningCompleted',
+             destoning_in_user = $2,
+             destoning_in_updt = current_timestamp
+         WHERE bag_no = ANY($1)`,
+        [uniqueBags, userid]
+      );
+
+      await client.query("COMMIT");
+      return res.json({ success: true });
+
+    } catch (err) {
+      await client.query("ROLLBACK");
+      console.error("Load API error:", err);
+      return res.status(500).json({ error: "Internal Server Error" });
+    } finally {
+      client.release();
+    }
+  }
+);
+
 
 
 router.post("/complete", authenticate, async (req, res) => {

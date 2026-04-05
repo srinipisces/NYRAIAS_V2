@@ -79,7 +79,7 @@ class TabErrorBoundary extends React.Component {
               Something went wrong in this tab.
             </Typography>
             <Typography variant="body2" sx={{ mb: 1.5 }} color="text.secondary">
-              Try again. If the problem persists, check the console/logs.
+              Try again. If the problem persists
             </Typography>
             <Button variant="contained" onClick={this.handleRetry}>Retry</Button>
             {/* Optional dev details:

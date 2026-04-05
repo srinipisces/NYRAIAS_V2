@@ -44,7 +44,7 @@ pool.connect()
     client.release();
     console.log("✅ Connected to DB");
     console.log("inside users and trying to list all ----server.js");
-
+    console.log(app.route)
     // 🔁 Routes
     app.use('/api/users', require('./users'));
     app.use('/api/suppliers', require('./suppliers'));
@@ -66,7 +66,13 @@ pool.connect()
     app.use('/api/reports_activation' ,require('./reports_activation.js'));
     app.use('/api/rms_reports' ,require('./rms_reports.js'));
     app.use('/api/delivery' ,require('./delivery.js'));
+    app.use('/api/factory-log' ,require('./factoryLog.js'));
     app.use('/api', require('./index'));
+    app.use((req, res, next) => {
+      console.log('REQ:', req.method, req.originalUrl);
+      next();
+    });
+
 
     app.listen(PORT, () => {
       console.log(`🚀 Server running on port ${PORT}`);

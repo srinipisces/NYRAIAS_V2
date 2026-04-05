@@ -205,8 +205,7 @@ export default function Screening({ tabName }) {
   const yesterday = statusData?.yesterdayCounters;
   const last10Output = statusData?.last10Output || [];
   const last10Loaded = statusData?.last10Loaded || [];
-  console.log(today);
-  console.log(statusData);
+  
   // Available list filtering
   const sortByDateDesc = (list) =>
     [...list].sort((a, b) => new Date(b?.screening_out_dt ?? 0) - new Date(a?.screening_out_dt ?? 0));

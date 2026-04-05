@@ -7,6 +7,8 @@
     "dev": "run-p --race frontend",
     "frontend": "vite --host",
     "build": "vite build",
+    "build:testbed": "vite build --mode testbed",
+    "build:production": "vite build --mode production",
     "preview": "vite preview"
   },
   "dependencies": {
