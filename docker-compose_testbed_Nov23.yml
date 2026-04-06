@@ -1,0 +1,31 @@
+version: "3.9"
+
+services:
+  testbed_nginx:
+    image: nginx:1.27-alpine
+    container_name: testbed_nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"   # prod VM will proxy /testbed → TESTBED_VM_IP:8080
+    volumes:
+      - ./nginx.testbed.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./tenants:/usr/share/nginx/html/tenants:ro
+    depends_on:
+      - testbed_api
+
+  testbed_api:
+    build: ./testbed-backend_api       # ⬅️ backend code lives here
+    container_name: testbed_api
+    restart: unless-stopped
+    env_file:
+      - ./testbed-backend_api/.env     # ⬅️ connects to your existing DBs
+    ports:
+      - "9000:8000"                    # prod VM will proxy /testbed_api → TESTBED_VM_IP:9000
+  # 🧠 Testbed scheduler (15-min jobs)
+  testbed_jobs:
+    build: ./testbed-backend_api
+    container_name: testbed_jobs
+    restart: unless-stopped
+    env_file:
+      - ./testbed-backend_api/.env   # same DB, same env as API
+    command: ["node", "jobs/15minsScheduler.js"]

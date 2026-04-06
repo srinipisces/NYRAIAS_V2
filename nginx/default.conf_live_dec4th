@@ -1,0 +1,96 @@
+# Port 80: keep challenge + redirect everything else to HTTPS
+server {
+    listen 80;
+    server_name nyraias.com www.nyraias.com;
+
+    location ^~ /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+        default_type "text/plain";
+        access_log off;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# Port 443: your site over TLS
+server {
+    listen 443 ssl http2;
+    server_name nyraias.com www.nyraias.com;
+
+    ssl_certificate     /etc/letsencrypt/live/nyraias.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/nyraias.com/privkey.pem;
+
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    # (Enable after verifying HTTPS works)
+    # add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always
+;
+
+    # 🔐 Login app at "/"
+    location / {
+        alias /usr/share/nginx/html/root/;
+        index index.html;
+        try_files $uri $uri/ /index.html;
+    }
+
+    # ✅ ActivatedCarbon SPA at "/activatedcarbon/"
+    location /activatedcarbon/ {
+        alias /usr/share/nginx/html/activatedcarbon/;
+        index index.html;
+        try_files $uri $uri/ /activatedcarbon/index.html;
+    }
+
+    # 🔁 Backend API
+    location /api/ {
+        proxy_pass http://backend-api:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+        # If you add websockets later:
+        # proxy_set_header Upgrade $http_upgrade;
+        # proxy_set_header Connection "upgrade";
+    }
+
+    # 📦 Static logos
+    location /static-logos/ {
+        alias /home/ubuntu/NYRAIAS_V2/static-logos/;
+        access_log off;
+        autoindex off;
+        expires 30d;
+    }
+    # testbedlogin
+    location /testbed/ {
+        proxy_pass http://172.31.24.30:8080/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+     }
+     # Pass the ActivatedCarbon app (optional but clearer)
+     location /testbed/activatedcarbon/ {
+        proxy_pass http://172.31.24.30:8080/activatedcarbon/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }     
+    #testbed backend_api
+    location /testbed_api/{
+        proxy_pass http://172.31.24.30:9000/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }   
+
+}
